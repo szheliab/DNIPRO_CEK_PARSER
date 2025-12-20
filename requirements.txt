@@ -1,0 +1,7 @@
+playwright
+requests
+#BeautifulSoup4
+chromium
+Pillow
+#python-telegram-bot==20.3
+dotenv
