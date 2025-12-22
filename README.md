@@ -1,1 +1,1 @@
-# CHERKASY_PARSER
+# Dnirpo CEK parser
