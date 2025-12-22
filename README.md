@@ -1,1 +1,1 @@
-# Dnirpo CEK parser
+# Dnipro CEK parser
