@@ -1,0 +1,135 @@
+name: Update Powercut Schedules
+
+on:
+  schedule:
+    # Run every 7 minutes
+    - cron: '*/7 * * * *'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  scrape-and-parse:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Install fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-dejavu-core fonts-dejavu-extra
+      
+      - name: Run scraper
+        run: |
+          python src/cek_scraper.py \
+            --url https://t.me/s/cek_info \
+            --output out/cek.json \
+            --region dnipro
+      
+      - name: Upload JSON artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: json-data
+          path: out/cek.json
+          retention-days: 1
+  
+  generate-images:
+    needs: scrape-and-parse
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Install fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-dejavu-core fonts-dejavu-extra
+      
+      - name: Download JSON artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: json-data
+          path: out/
+      
+      - name: Create output directory
+        run: mkdir -p out/images
+      
+      - name: Generate full schedule images
+        run: python src/gener_im_full.py
+      
+      - name: Generate individual group images
+        run: python src/gener_im_1_G.py
+      
+      - name: Upload images artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: schedule-images
+          path: out/images/
+          retention-days: 1
+  
+  commit-and-push:
+    needs: generate-images
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Download JSON artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: json-data
+          path: out/
+      
+      - name: Download images artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: schedule-images
+          path: out/images/
+      
+      - name: Configure Git
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+      
+      - name: Commit and push changes
+        run: |
+          git add out/
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
+          git commit -m "Update schedules - $(date +'%Y-%m-%d %H:%M:%S')"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

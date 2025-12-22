@@ -5,3 +5,4 @@ chromium
 Pillow
 #python-telegram-bot==20.3
 dotenv
+beautifulsoup4>=4.12.0
