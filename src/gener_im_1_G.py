@@ -427,10 +427,11 @@ class ImageRenderer:
                 state = gp_hours.get(h_key, "yes")
                 
                 # Отримуємо стани сусідніх годин
-                prev_h_key = str(h) if h > 0 else "24"
-                next_h_key = str(h + 2) if h < 23 else "1"
-                prev_state = gp_hours.get(prev_h_key, "yes")
-                next_state = gp_hours.get(next_h_key, "yes")
+                prev_h_key = str(h) if h > 0 else None
+                next_h_key = str(h + 2) if h < 23 else None
+
+                prev_state = gp_hours.get(prev_h_key, "yes") if prev_h_key else "yes"
+                next_state = gp_hours.get(next_h_key, "yes") if next_h_key else "yes"
                 
                 x0 = table_x0 + Config.LEFT_COL_W + h * Config.CELL_W
                 x1 = x0 + Config.CELL_W
