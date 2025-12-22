@@ -17,7 +17,6 @@ import locale
 import os
 import argparse
 import sys
-from telegram_notify import send_error
 
 # Спроба встановити локаль для українських назв місяців
 try:
@@ -582,7 +581,6 @@ def main():
         path = load_latest_json(JSON_DIR)
     except Exception as e:
         log(f"❌ Помилка при завантаженні JSON: {e}")
-        send_error(f"❌ Помилка при завантаженні JSON: {e}")
         sys.exit(1)
     
     log(f"Використовується JSON: {path}")
@@ -592,7 +590,6 @@ def main():
         log("✅ Генерація завершена успішно")
     except Exception as e:
         log(f"❌ Помилка: {e}")
-        send_error(f"❌ Помилка: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

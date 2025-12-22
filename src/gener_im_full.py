@@ -11,9 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont
-import os
 import sys
-from telegram_notify import send_error, send_photo, send_message
 
 # --- Налаштування шляхів ---
 BASE = Path(__file__).parent.parent.absolute()
@@ -421,7 +419,6 @@ def generate_from_json(json_path):
     path = Path(json_path)
     if not path.exists():
         log(f"❌ JSON файл не знайдено: {json_path}")
-        send_error(f"❌ JSON файл не знайдено: {json_path}")
         raise FileNotFoundError(f"JSON файл не знайдено: {json_path}")
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -433,7 +430,6 @@ def main():
         data, path = load_latest_json(JSON_DIR)
     except Exception as e:
         log(f"❌ Помилка при завантаженні JSON: {e}")
-        send_error(f"❌ Помилка при завантаженні JSON: {e}")
         sys.exit(1)
     
     log("▶️ Запускаю генерацію зображень з " + str(path))
@@ -441,7 +437,6 @@ def main():
         render(data, path)
     except Exception as e:
         log(f"❌ Помилка під час рендерингу: {e}")
-        send_error(f"❌ Помилка під час рендерингу: {e}")
         raise
 
 if __name__ == "__main__":
