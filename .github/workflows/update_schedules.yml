@@ -2,137 +2,158 @@ name: Update Powercut Schedules
 
 on:
   schedule:
-    # Run every 7 minutes
     - cron: '*/7 * * * *'
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch:
 
 jobs:
-  scrape-and-parse:
+  scrape-and-check:
     runs-on: ubuntu-latest
-    
+
+    outputs:
+      fact_data_changed: ${{ steps.fact_diff.outputs.changed }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-      
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-      
+
       - name: Install fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y fonts-dejavu-core fonts-dejavu-extra
-      
+
       - name: Create output directory
         run: mkdir -p out
-      
+
       - name: Run scraper
         run: |
           python src/cek_scraper.py \
             --url https://t.me/s/cek_info \
             --output out/cek.json \
             --region dnipro
-      
+
+      - name: Check if fact.data changed
+        id: fact_diff
+        run: |
+          set -e
+
+          # First run or missing file → treat as changed
+          if ! git show HEAD:out/cek.json >/dev/null 2>&1; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          jq -cS '.fact.data' out/cek.json > /tmp/new_fact.json
+          git show HEAD:out/cek.json | jq -cS '.fact.data' > /tmp/old_fact.json
+
+          if diff -q /tmp/old_fact.json /tmp/new_fact.json >/dev/null; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload JSON artifact
+        if: steps.fact_diff.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: json-data
           path: out/cek.json
           retention-days: 1
-  
+
   generate-images:
-    needs: scrape-and-parse
+    needs: scrape-and-check
     runs-on: ubuntu-latest
-    
+    if: needs.scrape-and-check.outputs.fact_data_changed == 'true'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-      
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-      
+
       - name: Install fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y fonts-dejavu-core fonts-dejavu-extra
-      
+
       - name: Download JSON artifact
         uses: actions/download-artifact@v4
         with:
           name: json-data
           path: out/
-      
-      - name: Create output directory
+
+      - name: Create images directory
         run: mkdir -p out/images
-      
+
       - name: Generate full schedule images
         run: python src/gener_im_full.py
-      
+
       - name: Generate individual group images
         run: python src/gener_im_1_G.py
-      
+
       - name: Upload images artifact
         uses: actions/upload-artifact@v4
         with:
           name: schedule-images
           path: out/images/
           retention-days: 1
-  
+
   commit-and-push:
     needs: generate-images
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Download JSON artifact
         uses: actions/download-artifact@v4
         with:
           name: json-data
           path: out/
-      
+
       - name: Download images artifact
         uses: actions/download-artifact@v4
         with:
           name: schedule-images
           path: out/images/
-      
+
       - name: Configure Git
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-      
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
       - name: Commit and push changes
         run: |
           git add out/
-          
-          # Check if there are changes to commit
+
           if git diff --staged --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          
-          git commit -m "Update schedules - $(date +'%Y-%m-%d %H:%M:%S')"
+
+          git commit -m "Update schedules (fact.data changed) - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
           git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
