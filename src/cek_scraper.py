@@ -27,6 +27,8 @@ class PowercutScraper:
     ):
         self.url = channel_url
         self.region_id = region_id
+        self.start_date = start_date
+        self.end_date = end_date
 
         self.months_uk = {
             "січня": "01",
@@ -46,16 +48,18 @@ class PowercutScraper:
 
         # Set default date range to today and tomorrow if not specified
         kyiv_tz = ZoneInfo("Europe/Kyiv")
-        today = datetime.now(kyiv_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.now(kyiv_tz).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         tomorrow = today + timedelta(days=1)
-        if start_date:
-            self.start_date = start_date
-        else:
+        if not start_date:
             self.start_date = today.strftime("%d.%m.%Y")
-        if end_date:
-            self.end_date = end_date
         else:
+            self.start_date = start_date
+        if not end_date:
             self.end_date = tomorrow.strftime("%d.%m.%Y")
+        else:
+            self.end_date = end_date
 
     def cleanup_old_data(self, data: dict) -> dict:
         """Remove data for dates before today (Kyiv timezone)
