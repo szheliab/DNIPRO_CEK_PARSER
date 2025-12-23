@@ -47,20 +47,18 @@ class PowercutScraper:
         self.current_year = datetime.now().year
 
         # Set default date range to today and tomorrow if not specified
+        kyiv_tz = ZoneInfo("Europe/Kyiv")
+        today = datetime.now(kyiv_tz).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        tomorrow = today + timedelta(days=1)
+
         if start_date is None:
-            kyiv_tz = ZoneInfo("Europe/Kyiv")
-            today = datetime.now(kyiv_tz).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
             self.start_date = today.strftime("%d.%m.%Y")
         else:
             self.start_date = start_date
 
         if end_date is None:
-            kyiv_tz = ZoneInfo("Europe/Kyiv")
-            tomorrow = datetime.now(kyiv_tz).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            ) + timedelta(days=1)
             self.end_date = tomorrow.strftime("%d.%m.%Y")
         else:
             self.end_date = end_date
@@ -414,9 +412,7 @@ class PowercutScraper:
             for idx, slot in enumerate(time_slots):
                 start_time_str, end_time_str = slot.split("-")
                 try:
-                    slot_start = datetime.strptime(
-                        f"{date} {start_time_str}", "%d.%m.%Y %H:%M"
-                    )
+
                     slot_end = datetime.strptime(
                         f"{date} {end_time_str}", "%d.%m.%Y %H:%M"
                     )
