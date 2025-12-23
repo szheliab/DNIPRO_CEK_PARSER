@@ -27,8 +27,6 @@ class PowercutScraper:
     ):
         self.url = channel_url
         self.region_id = region_id
-        self.start_date = start_date
-        self.end_date = end_date
 
         self.months_uk = {
             "січня": "01",
@@ -48,18 +46,16 @@ class PowercutScraper:
 
         # Set default date range to today and tomorrow if not specified
         kyiv_tz = ZoneInfo("Europe/Kyiv")
-        today = datetime.now(kyiv_tz).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        today = datetime.now(kyiv_tz).replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow = today + timedelta(days=1)
-        if start_date is None:
-            self.start_date = today.strftime("%d.%m.%Y")
-        else:
+        if start_date:
             self.start_date = start_date
-        if end_date is None:
-            self.end_date = tomorrow.strftime("%d.%m.%Y")
         else:
+            self.start_date = today.strftime("%d.%m.%Y")
+        if end_date:
             self.end_date = end_date
+        else:
+            self.end_date = tomorrow.strftime("%d.%m.%Y")
 
     def cleanup_old_data(self, data: dict) -> dict:
         """Remove data for dates before today (Kyiv timezone)
@@ -477,8 +473,9 @@ class PowercutScraper:
         # Old style schedule matching: "з 07:00 до 10:00 відключається 1, 2, 3.1 черги"
         #                           or "з 07:00 по 10:00 відключається 1, 2, 3.1 черги"
         old_pattern = re.compile(
-    r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
-            re.IGNORECASE)
+            r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
+            re.IGNORECASE,
+        )
         matches = old_pattern.findall(message)
 
         if matches:
