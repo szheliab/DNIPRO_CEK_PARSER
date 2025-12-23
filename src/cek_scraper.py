@@ -194,7 +194,7 @@ class PowercutScraper:
                         else None
                     )
                     if (start_filter and date_obj < start_filter) or (
-                        end_filter and date_obj > end_filter
+                        end_filter and date_obj >= end_filter + timedelta(days=1)
                     ):
                         continue  # Skip this date
 
@@ -386,7 +386,11 @@ class PowercutScraper:
                         and (current_time - slot_end).total_seconds() < 7200
                     ):
                         slot_to_modify = idx
-                except:
+                except (ValueError, TypeError, KeyError) as e:
+                    print(
+                        f"Warning: failed to parse time slot '{slot}' for date '{date}': {e}",
+                        file=sys.stderr,
+                    )
                     continue
 
             # If no specific slot found, extend the last one (default behavior)
@@ -408,7 +412,7 @@ class PowercutScraper:
             slot_to_modify = None
 
             for idx, slot in enumerate(time_slots):
-                start_time_str, end_time_str = slot.split("-")
+                _, end_time_str = slot.split("-")
                 try:
 
                     slot_end = datetime.strptime(
@@ -443,7 +447,7 @@ class PowercutScraper:
 
     def extract_queue_numbers(self, text: str) -> List[float]:
         """Extract queue numbers from text as floats"""
-        return [float(q) for q in re.findall(r"[\d.]+", text)]
+        return [float(q) for q in re.findall(r"\d+\.\d+|\d+", text)]
 
     def extract_all_schedules(self, message: str) -> Dict[float, List[str]]:
         """Extract schedule time slots for ALL queue numbers found in message
@@ -942,6 +946,10 @@ def main():
         # Generate JSON
         data = scraper.generate_json(schedules, existing_data)
 
+        # Ensure output directory exists (if a directory is specified)
+        output_dir = os.path.dirname(args.output)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
         # Save JSON file
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
