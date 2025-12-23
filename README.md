@@ -36,7 +36,7 @@ A Python-based scraper for electricity outage schedules in Dnipro, Ukraine. This
 Run the scraper to fetch and process outage schedules:
 
 ```bash
-python src/cek_scraper.py --channel-url <telegram-channel-url> --region-id dnipro
+python src/cek_scraper.py --url <telegram-channel-url> --region-id dnipro
 ```
 
 Optional arguments:
