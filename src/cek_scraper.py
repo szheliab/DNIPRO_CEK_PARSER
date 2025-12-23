@@ -18,9 +18,17 @@ import argparse
 
 class PowercutScraper:
 
-    def __init__(self, channel_url: str, region_id: str = "dnipro"):
+    def __init__(
+        self,
+        channel_url: str,
+        region_id: str = "dnipro",
+        start_date: str = None,
+        end_date: str = None,
+    ):
         self.url = channel_url
         self.region_id = region_id
+        self.start_date = start_date
+        self.end_date = end_date
 
         self.months_uk = {
             "січня": "01",
@@ -37,6 +45,25 @@ class PowercutScraper:
             "грудня": "12",
         }
         self.current_year = datetime.now().year
+
+        # Set default date range to today and tomorrow if not specified
+        if start_date is None:
+            kyiv_tz = ZoneInfo("Europe/Kyiv")
+            today = datetime.now(kyiv_tz).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            self.start_date = today.strftime("%d.%m.%Y")
+        else:
+            self.start_date = start_date
+
+        if end_date is None:
+            kyiv_tz = ZoneInfo("Europe/Kyiv")
+            tomorrow = datetime.now(kyiv_tz).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) + timedelta(days=1)
+            self.end_date = tomorrow.strftime("%d.%m.%Y")
+        else:
+            self.end_date = end_date
 
     def cleanup_old_data(self, data: dict) -> dict:
         """Remove data for dates before today (Kyiv timezone)
@@ -105,14 +132,14 @@ class PowercutScraper:
             Example: {"05.12.2025": {1.1: ["07:00-10:00"], 3.1: ["14:00-18:00"]}}
         """
         print(f"Fetching data from {self.url}")
-
         # Fetch the webpage
         response = requests.get(self.url)
         if response.status_code != 200:
             raise Exception(f"Failed to fetch webpage: {response.status_code}")
+        content = response.content
 
         # Parse the webpage content
-        soup = BeautifulSoup(response.content, "html.parser")
+        soup = BeautifulSoup(content, "html.parser")
 
         # Find all message widgets (full message containers, not just text)
         message_widgets = soup.find_all("div", class_="tgme_widget_message")
@@ -122,7 +149,7 @@ class PowercutScraper:
         today = datetime.now(kyiv_tz).replace(hour=0, minute=0, second=0, microsecond=0)
         today_str = today.strftime("%d.%m.%Y")
 
-        # Collect all schedules: date -> queue_number -> time_slots
+        # Collect all schedules and modifications from all messages
         all_schedules = {}
         modifications_by_date = {}
 
@@ -139,80 +166,75 @@ class PowercutScraper:
 
             message_text = message_text_div.get_text()
 
-            # Extract schedules for ALL queues
-            schedules_by_queue = self.extract_all_schedules(message_text)
-
-            # Extract date from message - if not found, assume today for modifications
+            # Extract date from message - if not found, use message timestamp date
             date = self.extract_date(message_text)
 
-            # If no date found but message has modifications, use today's date
-            if not date and schedules_by_queue:
-                # Check if this message contains only modifications
-                has_modifications = any(
-                    any(slot.startswith("MOD:") for slot in slots)
-                    for slots in schedules_by_queue.values()
-                )
-                if has_modifications:
-                    date = today_str
-                    print(f"No date in modification message, using today: {date}")
+            # If no date found, use message timestamp date
+            if not date and message_timestamp:
+                date = message_timestamp.strftime("%d.%m.%Y")
+            elif not date:
+                # Fallback to today if no timestamp
+                date = today_str
 
-            if date and schedules_by_queue:
+            if date:
                 date_obj = datetime.strptime(date, "%d.%m.%Y")
                 # Make date_obj timezone-aware
                 date_obj = date_obj.replace(tzinfo=kyiv_tz)
 
+                # Filter by time frame if specified
+                if self.start_date or self.end_date:
+                    start_filter = (
+                        datetime.strptime(self.start_date, "%d.%m.%Y").replace(
+                            tzinfo=kyiv_tz
+                        )
+                        if self.start_date
+                        else None
+                    )
+                    end_filter = (
+                        datetime.strptime(self.end_date, "%d.%m.%Y").replace(
+                            tzinfo=kyiv_tz
+                        )
+                        if self.end_date
+                        else None
+                    )
+                    if (start_filter and date_obj < start_filter) or (
+                        end_filter and date_obj > end_filter
+                    ):
+                        continue  # Skip this date
+
                 # Only process today or future dates
                 if date_obj >= today:
-                    if date not in all_schedules:
-                        all_schedules[date] = {}
-                    if date not in modifications_by_date:
-                        modifications_by_date[date] = {}
+                    print(
+                        f'Processing message posted at: {message_timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if message_timestamp else "Unknown time"} for date {date}'
+                    )
 
-                    # Separate regular schedules from modifications
-                    for queue_num, time_slots in schedules_by_queue.items():
-                        regular_slots = []
-                        mods = []
+                    # Extract schedules for ALL queues
+                    schedules_by_queue = self.extract_all_schedules(message_text)
 
-                        for slot in time_slots:
-                            if slot.startswith("MOD:"):
-                                # Only accept modifications if message was posted today
-                                if message_timestamp and self.is_message_from_today(
-                                    message_timestamp, kyiv_tz
-                                ):
-                                    mods.append(slot)
-                                    msg_time = message_timestamp.strftime("%H:%M")
-                                    print(
-                                        f"Accepting modification for queue {queue_num} from today's message ({msg_time}): {slot}"
-                                    )
-                                else:
-                                    if message_timestamp:
-                                        msg_date = message_timestamp.strftime(
-                                            "%Y-%m-%d %H:%M"
-                                        )
-                                        print(
-                                            f"Skipping modification for queue {queue_num} from {msg_date} (not today): {slot}"
-                                        )
-                                    else:
-                                        print(
-                                            f"Skipping modification for queue {queue_num} (no timestamp available): {slot}"
-                                        )
-                            else:
-                                regular_slots.append(slot)
+                    if schedules_by_queue:
+                        if date not in all_schedules:
+                            all_schedules[date] = {}
+                        for queue_num, time_slots in schedules_by_queue.items():
+                            if queue_num not in all_schedules[date]:
+                                all_schedules[date][queue_num] = []
+                            all_schedules[date][queue_num].extend(time_slots)
 
-                        if regular_slots:
-                            combined_slots = self.combine_time_slots(
-                                date, regular_slots
-                            )
-                            if combined_slots:
-                                all_schedules[date][queue_num] = combined_slots
-                                print(
-                                    f"Found schedules for {date}, Queue {queue_num}: {combined_slots}"
-                                )
+                    # Extract modifications
+                    modifications = self.extract_modifications(message_text)
+                    if modifications:
+                        if date not in modifications_by_date:
+                            modifications_by_date[date] = []
+                        modifications_by_date[date].extend(modifications)
 
-                        if mods:
-                            if queue_num not in modifications_by_date[date]:
-                                modifications_by_date[date][queue_num] = []
-                            modifications_by_date[date][queue_num].extend(mods)
+        # Combine time slots for each queue in each date
+        for date, queues_schedules in all_schedules.items():
+            for queue_num, time_slots in queues_schedules.items():
+                if time_slots:
+                    combined = self.combine_time_slots(date, time_slots)
+                    all_schedules[date][queue_num] = combined
+                    print(
+                        f"Combined schedules for {date}, Queue {queue_num}: {combined}"
+                    )
 
         # Apply modifications to schedules
         self.apply_modifications(all_schedules, modifications_by_date)
@@ -231,7 +253,7 @@ class PowercutScraper:
         try:
             # Look for the time element using the same selector as Home Assistant
             # CSS selector: .tgme_widget_message_meta a.tgme_widget_message_date time.time
-            meta_div = message_widget.find("div", class_="tgme_widget_message_meta")
+            meta_div = message_widget.find(class_="tgme_widget_message_meta")
             if meta_div:
                 date_link = meta_div.find("a", class_="tgme_widget_message_date")
                 if date_link:
@@ -436,10 +458,10 @@ class PowercutScraper:
 
         # Pattern: "3.1 черга: з 07:00 до 10:00; з 14:00 до 18:00"
         pattern = re.compile(
-            r"([\d.]+)\W*черг[аи]:\s*((?:\W+з\s\d{2}:\d{2}\sдо\s\d{2}:\d{2};?)+)",
+            r"([\d.]+)\W*черг[аи]:\s*((?:\W+з\s\d{2}:\d{2}\s(?:по|до)\s\d{2}:\d{2};?)+)",
             re.IGNORECASE,
         )
-        schedules_pattern = re.compile(r"з\s(\d{2}:\d{2})\sдо\s(\d{2}:\d{2})")
+        schedules_pattern = re.compile(r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2})")
 
         for match in pattern.finditer(message):
             queue_info = match.group(1)
@@ -456,7 +478,7 @@ class PowercutScraper:
 
         # Old style schedule matching: "з 07:00 до 10:00 відключається 1, 2, 3.1 черги"
         old_pattern = re.compile(
-            r"(?:з\s(\d{2}:\d{2})\sдо\s(\d{2}:\d{2});?)\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
+            r"(?:з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?)\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
             re.IGNORECASE,
         )
         matches = old_pattern.findall(message)
@@ -469,13 +491,33 @@ class PowercutScraper:
                 queue_info = match[2]
 
                 # Extract all numbers (including decimals) from queue_info
-                queue_numbers = re.findall(r"[\d.]+", queue_info)
+                queue_numbers = self.extract_queue_numbers(queue_info)
 
-                for queue_str in queue_numbers:
-                    queue_number = float(queue_str)
+                for queue_number in queue_numbers:
                     if queue_number not in schedules_by_queue:
                         schedules_by_queue[queue_number] = []
                     schedules_by_queue[queue_number].append(time_range)
+
+        # New style schedule matching for today's format: "📌 1.1 з 15:00 по 22:00"
+        # Find all queue blocks
+        queue_blocks = re.findall(
+            r"📌\s*([\d.]+)(.*?)(?=📌|$)",
+            message,
+            re.IGNORECASE | re.DOTALL,
+        )
+        for queue_info, block in queue_blocks:
+            try:
+                queue_number = float(queue_info)
+                if queue_number not in schedules_by_queue:
+                    schedules_by_queue[queue_number] = []
+                # Find all time slots in this block
+                time_slots = re.findall(
+                    r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2})", block, re.IGNORECASE
+                )
+                for start_time, end_time in time_slots:
+                    schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
+            except ValueError:
+                continue
 
         # Check for schedule modifications
         modifications = self.extract_modifications(message)
@@ -507,19 +549,15 @@ class PowercutScraper:
             time = match.group(1)
             queues_str = match.group(2)
             # Extract all queue numbers from the string
-            queue_numbers = re.findall(r"[\d.]+", queues_str)
-            for queue_str in queue_numbers:
-                try:
-                    queue = float(queue_str)
-                    modifications.append((queue, "prolong", time))
-                    print(f"Found prolongation for queue {queue} until {time}")
-                except ValueError:
-                    continue
+            queue_numbers = self.extract_queue_numbers(queues_str)
+            for queue in queue_numbers:
+                modifications.append((queue, "prolong", time))
+                print(f"Found prolongation for queue {queue} until {time}")
 
         # Pattern for additional outage: "з 06:00 до 09:00 додатково застосовуватиметься відключення підчерг 1.1, 1.2 та 3.1"
         # This pattern handles time range (from-to) with multiple queues
         additional_pattern = re.compile(
-            r"з\s(\d{2}:\d{2})(?:\sдо\s(\d{2}:\d{2}))?\s+додатково\s+(?:застосовуватиметься|застосовується)\s+(?:відключення\s+)?(?:під)?черг[аиу]?\s+([\d.,\sіта]+)",
+            r"з\s(\d{2}:\d{2})(?:\s(?:по|до)\s(\d{2}:\d{2}))?\s+додатково\s+(?:застосовуватиметься|застосовується)\s+(?:відключення\s+)?(?:під)?черг[аиу]?\s+([\d.,\sіта]+)",
             re.IGNORECASE,
         )
         for match in additional_pattern.finditer(message):
@@ -528,24 +566,20 @@ class PowercutScraper:
             queues_str = match.group(3)
 
             # Extract all queue numbers from the string (handles "1.1, 1.2 та 3.1")
-            queue_numbers = re.findall(r"[\d.]+", queues_str)
+            queue_numbers = self.extract_queue_numbers(queues_str)
 
-            for queue_str in queue_numbers:
-                try:
-                    queue = float(queue_str)
-                    # If there's an end time, this is a new outage slot, not just early start
-                    if end_time:
-                        modifications.append(
-                            (queue, "additional", f"{start_time}-{end_time}")
-                        )
-                        print(
-                            f"Found additional outage for queue {queue} from {start_time} to {end_time}"
-                        )
-                    else:
-                        modifications.append((queue, "early_start", start_time))
-                        print(f"Found early start for queue {queue} at {start_time}")
-                except ValueError:
-                    continue
+            for queue in queue_numbers:
+                # If there's an end time, this is a new outage slot, not just early start
+                if end_time:
+                    modifications.append(
+                        (queue, "additional", f"{start_time}-{end_time}")
+                    )
+                    print(
+                        f"Found additional outage for queue {queue} from {start_time} to {end_time}"
+                    )
+                else:
+                    modifications.append((queue, "early_start", start_time))
+                    print(f"Found early start for queue {queue} at {start_time}")
 
         # Pattern for cancellation: "скасовано відключення черги 3.1"
         cancel_pattern = re.compile(
@@ -554,14 +588,10 @@ class PowercutScraper:
         )
         for match in cancel_pattern.finditer(message):
             queues_str = match.group(1)
-            queue_numbers = re.findall(r"[\d.]+", queues_str)
-            for queue_str in queue_numbers:
-                try:
-                    queue = float(queue_str)
-                    modifications.append((queue, "cancel", "00:00"))
-                    print(f"Found cancellation for queue {queue}")
-                except ValueError:
-                    continue
+            queue_numbers = self.extract_queue_numbers(queues_str)
+            for queue in queue_numbers:
+                modifications.append((queue, "cancel", "00:00"))
+                print(f"Found cancellation for queue {queue}")
 
         return modifications
 
@@ -854,6 +884,10 @@ class PowercutScraper:
 
         return hours
 
+    def extract_queue_numbers(self, text: str) -> List[float]:
+        """Extract queue numbers from text as floats"""
+        return [float(q) for q in re.findall(r"[\d.]+", text)]
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -861,11 +895,19 @@ def main():
     )
     parser.add_argument(
         "--url",
-        required=True,
+        default="https://t.me/s/cek_info",
         help="Telegram channel URL (e.g., https://t.me/s/channelname)",
     )
     parser.add_argument(
-        "--output", default="powercuts.json", help="Output JSON file path"
+        "--start-date",
+        help="Start date for filtering schedules (DD.MM.YYYY)",
+    )
+    parser.add_argument(
+        "--end-date",
+        help="End date for filtering schedules (DD.MM.YYYY)",
+    )
+    parser.add_argument(
+        "--output", default="out/cek.json", help="Output JSON file path"
     )
     parser.add_argument("--region", default="dnipro", help="Region ID")
 
@@ -873,7 +915,12 @@ def main():
 
     try:
         # Create scraper instance
-        scraper = PowercutScraper(channel_url=args.url, region_id=args.region)
+        scraper = PowercutScraper(
+            channel_url=args.url,
+            region_id=args.region,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
 
         # Scrape messages for ALL queues
         schedules = scraper.scrape_messages()
