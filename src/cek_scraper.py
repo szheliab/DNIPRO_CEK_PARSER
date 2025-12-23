@@ -52,11 +52,11 @@ class PowercutScraper:
             hour=0, minute=0, second=0, microsecond=0
         )
         tomorrow = today + timedelta(days=1)
-        if start_date is None:
+        if not start_date:
             self.start_date = today.strftime("%d.%m.%Y")
         else:
             self.start_date = start_date
-        if end_date is None:
+        if not end_date:
             self.end_date = tomorrow.strftime("%d.%m.%Y")
         else:
             self.end_date = end_date
