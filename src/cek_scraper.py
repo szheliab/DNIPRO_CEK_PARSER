@@ -477,8 +477,9 @@ class PowercutScraper:
         # Old style schedule matching: "з 07:00 до 10:00 відключається 1, 2, 3.1 черги"
         #                           or "з 07:00 по 10:00 відключається 1, 2, 3.1 черги"
         old_pattern = re.compile(
-    r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
-            re.IGNORECASE)
+            r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
+            re.IGNORECASE,
+        )
         matches = old_pattern.findall(message)
 
         if matches:
