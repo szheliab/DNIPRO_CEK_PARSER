@@ -12,7 +12,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 import argparse
 
 
@@ -52,12 +52,10 @@ class PowercutScraper:
             hour=0, minute=0, second=0, microsecond=0
         )
         tomorrow = today + timedelta(days=1)
-
         if start_date is None:
             self.start_date = today.strftime("%d.%m.%Y")
         else:
             self.start_date = start_date
-
         if end_date is None:
             self.end_date = tomorrow.strftime("%d.%m.%Y")
         else:
@@ -443,6 +441,10 @@ class PowercutScraper:
         # Recombine slots in case modification created overlap
         return self.combine_time_slots(date, modified)
 
+    def extract_queue_numbers(self, text: str) -> List[float]:
+        """Extract queue numbers from text as floats"""
+        return [float(q) for q in re.findall(r"[\d.]+", text)]
+
     def extract_all_schedules(self, message: str) -> Dict[float, List[str]]:
         """Extract schedule time slots for ALL queue numbers found in message
 
@@ -473,10 +475,10 @@ class PowercutScraper:
                 schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
 
         # Old style schedule matching: "з 07:00 до 10:00 відключається 1, 2, 3.1 черги"
+        #                           or "з 07:00 по 10:00 відключається 1, 2, 3.1 черги"
         old_pattern = re.compile(
-            r"(?:з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?)\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
-            re.IGNORECASE,
-        )
+    r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
+            re.IGNORECASE)
         matches = old_pattern.findall(message)
 
         if matches:
@@ -879,10 +881,6 @@ class PowercutScraper:
                         hours[str(hour + 1)] = "no"
 
         return hours
-
-    def extract_queue_numbers(self, text: str) -> List[float]:
-        """Extract queue numbers from text as floats"""
-        return [float(q) for q in re.findall(r"[\d.]+", text)]
 
 
 def main():
