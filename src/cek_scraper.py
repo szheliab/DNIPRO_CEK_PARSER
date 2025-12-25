@@ -710,15 +710,15 @@ class PowercutScraper:
                 hours_data = self.create_hours_from_schedules(time_slots)
                 data["fact"]["data"][timestamp_key][queue_key] = hours_data
 
-        # Update fact metadata
-        data["fact"]["update"] = datetime.now().strftime("%d.%m.%Y %H:%M")
-
         # Set today's timestamp (using Kyiv timezone)
         kyiv_tz = ZoneInfo("Europe/Kyiv")
         today_midnight = datetime.now(kyiv_tz).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         data["fact"]["today"] = int(today_midnight.timestamp())
+
+        # Update fact metadata
+        data["fact"]["update"] = datetime.now(kyiv_tz).strftime("%d.%m.%Y %H:%M")
 
         # Update lastUpdateStatus
         data["lastUpdateStatus"]["at"] = (
