@@ -37,7 +37,8 @@ jobs:
           python src/cek_scraper.py \
             --url https://t.me/s/cek_info \
             --output out/cek.json \
-            --region dnipro
+            --region dnipro \
+            --log-level DEBUG
 
       - name: Check if fact.data changed
         id: fact_diff
