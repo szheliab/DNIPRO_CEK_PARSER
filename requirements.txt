@@ -1,3 +1,12 @@
-requests
-Pillow
-beautifulsoup4>=4.12.0
+# HTTP library
+requests>=2.31.0,<3.0.0
+
+# Image processing
+Pillow>=12.0.0,<13.0.0
+
+# HTML parsing
+beautifulsoup4>=4.12.0,<5.0.0
+
+# HTTP adapter utilities (included with requests but explicit for clarity)
+urllib3>=2.0.0,<3.0.0
+

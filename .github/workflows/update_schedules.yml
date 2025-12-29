@@ -29,11 +29,6 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install fonts
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-dejavu-core fonts-dejavu-extra
-
       - name: Create output directory
         run: mkdir -p out
 
