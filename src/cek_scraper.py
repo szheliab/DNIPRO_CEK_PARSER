@@ -182,6 +182,12 @@ def validate_json_structure(data: dict, logger: logging.Logger) -> bool:
 
 
 class PowercutScraper:
+    # Threshold for determining if a message contains a "full" schedule vs partial/modification
+    # Dnipro region has 12 queues (1.1, 1.2, 2.1, 2.2, 3.1, 3.2, 4.1, 4.2, 5.1, 5.2, 6.1, 6.2)
+    # Messages with >= 6 queues (50%) are considered "full schedules"
+    # Messages with < 6 queues are likely modification-only messages (early start, prolongation, etc.)
+    # Adjust this value if the number of queues in the region changes
+    FULL_SCHEDULE_THRESHOLD = 6
 
     def __init__(
         self,
@@ -423,14 +429,12 @@ class PowercutScraper:
             day_start_timestamp = date_obj.timestamp()
 
             # Find the best message
-            full_schedule_threshold = 6  # Minimum queues for a "full" schedule
-
             # Strategy 1: Last full message published BEFORE the day starts
             best_message_before_day = None
             for msg in reversed(messages):
                 if (
                     msg["timestamp"] < day_start_timestamp
-                    and len(msg["schedules"]) >= full_schedule_threshold
+                    and len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD
                 ):
                     best_message_before_day = msg
                     break
@@ -439,7 +443,7 @@ class PowercutScraper:
             best_full_message = None
             if not best_message_before_day:
                 for msg in reversed(messages):
-                    if len(msg["schedules"]) >= full_schedule_threshold:
+                    if len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD:
                         best_full_message = msg
                         break
 
@@ -669,7 +673,17 @@ class PowercutScraper:
                     continue
 
             # If no specific slot found, extend the last one (default behavior)
+            # This fallback is used when no slot is currently ongoing or recently ended
             if slot_to_modify is None:
+                self.logger.info(
+                    f"Prolong fallback: No ongoing or recent slot found{queue_str}. "
+                    f"Extending last slot to {mod_time} as fallback."
+                )
+                if len(time_slots) == 0:
+                    self.logger.error(
+                        f"Cannot apply prolongation{queue_str}: no time slots available"
+                    )
+                    return time_slots  # Return unmodified
                 slot_to_modify = len(time_slots) - 1
 
             # Modify the identified slot
@@ -705,7 +719,17 @@ class PowercutScraper:
                     continue
 
             # If no specific slot found (all slots start before early start time), modify the last one
+            # This is a fallback for edge cases - log a warning as this may indicate incorrect data
             if slot_to_modify is None:
+                self.logger.warning(
+                    f"Early start fallback: All time slots start before {mod_time}{queue_str}. "
+                    f"Modifying last slot as fallback. This may indicate incorrect data or timing."
+                )
+                if len(time_slots) == 0:
+                    self.logger.error(
+                        f"Cannot apply early start{queue_str}: no time slots available"
+                    )
+                    return time_slots  # Return unmodified
                 slot_to_modify = len(time_slots) - 1
 
             # Modify the identified slot
