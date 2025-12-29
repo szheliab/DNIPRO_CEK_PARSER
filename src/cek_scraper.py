@@ -406,18 +406,27 @@ class PowercutScraper:
                             {"timestamp": msg_time, "schedules": schedules_by_queue}
                         )
 
-                    # Extract modifications
+                    # Extract modifications with timestamp
                     modifications = self.extract_modifications(message_text)
                     if modifications:
+                        msg_time = (
+                            message_timestamp.timestamp() if message_timestamp else 0
+                        )
                         if date not in modifications_by_date:
                             modifications_by_date[date] = []
-                        modifications_by_date[date].extend(modifications)
+                        # Store modifications with their message timestamp
+                        for mod in modifications:
+                            modifications_by_date[date].append(
+                                (mod[0], mod[1], mod[2], msg_time)  # queue, type, time, msg_timestamp
+                            )
 
         # Process messages: for each date select the best message
         # Strategy: use the last message published BEFORE the start of the schedule day
         # This ensures full schedule for the entire day (00:00-24:00)
         # Messages published during the day only show remaining outages
         all_schedules = {}
+        base_schedule_timestamps = {}  # Track when the base schedule was posted for each date
+
         for date, messages in messages_by_date.items():
             # Sort messages by timestamp (latest last)
             messages.sort(key=lambda x: x["timestamp"])
@@ -428,55 +437,109 @@ class PowercutScraper:
             )
             day_start_timestamp = date_obj.timestamp()
 
-            # Find the best message
-            # Strategy 1: Last full message published BEFORE the day starts
-            best_message_before_day = None
-            for msg in reversed(messages):
-                if (
-                    msg["timestamp"] < day_start_timestamp
-                    and len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD
-                ):
-                    best_message_before_day = msg
-                    break
+            # Find the best message using improved strategy:
+            # 1. Prefer latest FULL schedule (12 queues) regardless of when posted
+            # 2. Fallback to latest full message before day start
+            # 3. Fallback to any message
+            # This ensures schedule updates posted during the day take precedence
 
-            # Strategy 2: If no messages before day start, look for any full message
-            best_full_message = None
-            if not best_message_before_day:
-                for msg in reversed(messages):
-                    if len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD:
-                        best_full_message = msg
-                        break
+            best_full_message_today = None
+            best_message_before_day = None
+
+            # Look for full schedule messages (12 queues)
+            # We need to check ALL messages to find both today's and yesterday's
+            for msg in reversed(messages):
+                if len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD:
+                    msg_dt = datetime.fromtimestamp(msg["timestamp"], tz=kyiv_tz)
+                    if msg["timestamp"] >= day_start_timestamp:
+                        # Full schedule posted during the schedule day
+                        if best_full_message_today is None:  # Take the latest one
+                            best_full_message_today = msg
+                            self.logger.debug(
+                                f"Found full message from today: {msg_dt.strftime('%Y-%m-%d %H:%M')}, "
+                                f"{len(msg['schedules'])} queues"
+                            )
+                    else:
+                        # Full schedule before day
+                        if best_message_before_day is None:  # Take the latest one before day
+                            best_message_before_day = msg
+                            self.logger.debug(
+                                f"Found full message before day: {msg_dt.strftime('%Y-%m-%d %H:%M')}, "
+                                f"{len(msg['schedules'])} queues"
+                            )
 
             # Strategy 3: If nothing found, take the last available
             fallback_message = messages[-1] if messages else None
 
-            # Select the best message
-            message_to_use = (
-                best_message_before_day or best_full_message or fallback_message
+            # Select and potentially merge messages for complete coverage
+            if best_full_message_today and best_message_before_day:
+                # Special case: Merge schedules from both messages
+                # Yesterday's message: has full day including morning (00:00-12:00)
+                # Today's message: has updated afternoon/evening (12:00-24:00)
+                self.logger.info(
+                    f"Merging schedules for {date}: base from yesterday + updates from today"
+                )
+
+                # Start with yesterday's schedule
+                merged_schedules = {}
+
+                # First, add all schedules from yesterday
+                for queue_num, time_slots in best_message_before_day["schedules"].items():
+                    merged_schedules[queue_num] = time_slots.copy()
+
+                # Then, merge in today's schedule - ADD time slots, don't replace
+                for queue_num, today_slots in best_full_message_today["schedules"].items():
+                    if queue_num in merged_schedules:
+                        # Merge: combine both lists and remove duplicates
+                        combined = merged_schedules[queue_num] + today_slots
+                        # The combine_time_slots method will handle overlaps and sorting
+                        merged_schedules[queue_num] = combined
+                    else:
+                        # Queue only in today's message
+                        merged_schedules[queue_num] = today_slots.copy()
+
+                message_to_use = {
+                    "timestamp": best_full_message_today["timestamp"],  # Use today's timestamp
+                    "schedules": merged_schedules
+                }
+                msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
+                queue_count = len(merged_schedules)
+                msg_type = "merged schedule (yesterday + today)"
+
+            elif best_full_message_today:
+                message_to_use = best_full_message_today
+                msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
+                queue_count = len(message_to_use["schedules"])
+                msg_type = "full schedule from today (latest update)"
+
+            elif best_message_before_day:
+                message_to_use = best_message_before_day
+                msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
+                queue_count = len(message_to_use["schedules"])
+                msg_type = "full schedule (published before schedule day)"
+
+            elif fallback_message:
+                message_to_use = fallback_message
+                msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
+                queue_count = len(message_to_use["schedules"])
+                msg_type = "partial schedule (fallback)"
+            else:
+                # No messages at all for this date
+                continue
+
+            # Log the selected message
+            self.logger.info(
+                f"Using {msg_type} for {date} "
+                f"(posted: {msg_time.strftime('%Y-%m-%d %H:%M')}, {queue_count} queues)"
             )
 
-            if message_to_use:
-                queue_count = len(message_to_use["schedules"])
-                msg_time = datetime.fromtimestamp(
-                    message_to_use["timestamp"], tz=kyiv_tz
-                )
+            # Store the timestamp of the base schedule
+            base_schedule_timestamps[date] = message_to_use['timestamp']
 
-                # Determine message type for logging
-                if best_message_before_day:
-                    msg_type = "full schedule (published before schedule day)"
-                elif best_full_message:
-                    msg_type = "full schedule"
-                else:
-                    msg_type = "partial schedule"
-
-                self.logger.info(
-                    f"Using {msg_type} for {date} "
-                    f"(posted: {msg_time.strftime('%Y-%m-%d %H:%M')}, {queue_count} queues)"
-                )
-
-                all_schedules[date] = {}
-                for queue_num, time_slots in message_to_use["schedules"].items():
-                    all_schedules[date][queue_num] = time_slots
+            # Store schedules
+            all_schedules[date] = {}
+            for queue_num, time_slots in message_to_use["schedules"].items():
+                all_schedules[date][queue_num] = time_slots
 
         # Combine time slots for each queue in each date
         for date, queues_schedules in all_schedules.items():
@@ -489,19 +552,38 @@ class PowercutScraper:
                     )
 
         # Transform modifications from List[tuple] to Dict structure expected by apply_modifications
-        # From: {date: [(queue_num, mod_type, mod_time), ...]}
+        # From: {date: [(queue_num, mod_type, mod_time, msg_timestamp), ...]}
         # To: {date: {queue_num: ["MOD:mod_type:mod_time", ...], ...}}
-        # Уникаємо дублювання однакових модифікацій для однієї черги в один день.
+        # IMPORTANT: Only apply modifications that were posted AFTER the base schedule message
+        # This prevents applying old modifications to newer full schedule replacements
         transformed_mods = {}
         for date, mod_list in modifications_by_date.items():
+            base_timestamp = base_schedule_timestamps.get(date, 0)
             transformed_mods[date] = {}
-            for queue_num, mod_type, mod_time in mod_list:
-                if queue_num not in transformed_mods[date]:
-                    # Використовуємо множину під час побудови для дедуплікації
-                    transformed_mods[date][queue_num] = set()
-                transformed_mods[date][queue_num].add(f"MOD:{mod_type}:{mod_time}")
+            filtered_count = 0
+            applied_count = 0
 
-        # Перетворюємо множини назад у списки (стабільний відсортований порядок)
+            for queue_num, mod_type, mod_time, msg_timestamp in mod_list:
+                # Only apply modification if it was posted AFTER the base schedule
+                if msg_timestamp > base_timestamp:
+                    if queue_num not in transformed_mods[date]:
+                        transformed_mods[date][queue_num] = set()
+                    transformed_mods[date][queue_num].add(f"MOD:{mod_type}:{mod_time}")
+                    applied_count += 1
+                else:
+                    filtered_count += 1
+                    self.logger.debug(
+                        f"Skipping outdated {mod_type} modification for queue {queue_num} on {date} "
+                        f"(mod posted at {msg_timestamp}, base schedule at {base_timestamp})"
+                    )
+
+            if filtered_count > 0:
+                self.logger.info(
+                    f"Filtered {filtered_count} outdated modification(s) for {date}, "
+                    f"applied {applied_count} newer modification(s)"
+                )
+
+        # Convert sets back to lists (stable sorted order)
         for date, queues_mods in transformed_mods.items():
             for queue_num, mods_set in queues_mods.items():
                 transformed_mods[date][queue_num] = sorted(mods_set)
