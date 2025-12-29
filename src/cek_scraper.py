@@ -5,18 +5,189 @@ Scrapes electricity outage schedules for ALL queues and outputs to JSON format
 """
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import re
 import json
 import os
 import sys
+import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional
 import argparse
 
 
+# Setup logging
+def setup_logging(log_level: str = "INFO") -> logging.Logger:
+    """Configure logging for production use"""
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Log format with Kyiv timezone
+    kyiv_tz = ZoneInfo("Europe/Kyiv")
+
+    class KyivFormatter(logging.Formatter):
+        def formatTime(self, record, datefmt=None):
+            dt = datetime.fromtimestamp(record.created, tz=kyiv_tz)
+            if datefmt:
+                return dt.strftime(datefmt)
+            return dt.isoformat()
+
+    logger = logging.getLogger("cek_scraper")
+    logger.setLevel(getattr(logging, log_level.upper()))
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_formatter = KyivFormatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S %Z",
+    )
+    console_handler.setFormatter(console_formatter)
+
+    # File handler
+    file_handler = logging.FileHandler(
+        os.path.join(log_dir, "cek_scraper.log"), encoding="utf-8"
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = KyivFormatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S %Z",
+    )
+    file_handler.setFormatter(file_formatter)
+
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+
+    return logger
+
+
+def create_session_with_retries(
+    retries: int = 3,
+    backoff_factor: float = 0.5,
+    status_forcelist: tuple = (500, 502, 503, 504, 429),
+) -> requests.Session:
+    """Create HTTP session with retry logic and timeout"""
+    session = requests.Session()
+
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        allowed_methods=["GET", "HEAD"],
+    )
+
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    # User-Agent актуальний станом на 2025-12, за потреби оновлюйте версію Chrome
+    # щоб уникнути блокувань зі сторони Telegram/веб-серверів.
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        }
+    )
+
+    return session
+
+
+def validate_json_structure(data: dict, logger: logging.Logger) -> bool:
+    """Validate JSON structure before saving.
+
+    Args:
+        data: JSON data for validation
+        logger: Logger for output messages; validation errors and warnings are
+            logged here with details.
+
+    Returns:
+        True if structure is valid, False otherwise.
+    """
+    try:
+        # Check required fields
+        required_fields = [
+            "regionId",
+            "lastUpdated",
+            "fact",
+            "preset",
+            "lastUpdateStatus",
+            "meta",
+        ]
+        for field in required_fields:
+            if field not in data:
+                logger.error(f"Missing required field: {field}")
+                return False
+
+        # Check fact structure
+        if "data" not in data["fact"]:
+            logger.error("Missing 'data' in fact section")
+            return False
+
+        # Check that there is at least one date with data
+        if not data["fact"]["data"]:
+            logger.warning("No schedule data in fact section")
+            # This is a warning, but not a critical error
+
+        # Check structure of each date
+        for timestamp, date_data in data["fact"]["data"].items():
+            if not isinstance(date_data, dict):
+                logger.error(f"Invalid data structure for timestamp {timestamp}")
+                return False
+
+            # Check that there is at least one queue
+            if not date_data:
+                logger.warning(f"No queue data for timestamp {timestamp}")
+                continue
+
+            # Check queue structure
+            for queue_key, queue_data in date_data.items():
+                if not queue_key.startswith("GPV"):
+                    logger.error(f"Invalid queue key format: {queue_key}")
+                    return False
+
+                if not isinstance(queue_data, dict):
+                    logger.error(f"Invalid queue data structure for {queue_key}")
+                    return False
+
+                # Check that data exists for all 24 hours
+                for hour in range(1, 25):
+                    if str(hour) not in queue_data:
+                        logger.error(f"Missing hour {hour} in queue {queue_key}")
+                        return False
+
+                    # Check valid values
+                    valid_values = [
+                        "yes",
+                        "no",
+                        "first",
+                        "second",
+                        "maybe",
+                        "mfirst",
+                        "msecond",
+                    ]
+                    if queue_data[str(hour)] not in valid_values:
+                        logger.error(
+                            f"Invalid value '{queue_data[str(hour)]}' for hour {hour} in queue {queue_key}"
+                        )
+                        return False
+
+        logger.debug("JSON structure validation passed")
+        return True
+
+    except Exception as e:
+        logger.error(f"JSON validation error: {e}", exc_info=True)
+        return False
+
+
 class PowercutScraper:
+    # Threshold for determining if a message contains a "full" schedule vs partial/modification
+    # Dnipro region has 12 queues (1.1, 1.2, 2.1, 2.2, 3.1, 3.2, 4.1, 4.2, 5.1, 5.2, 6.1, 6.2)
+    # Messages with >= 6 queues (50%) are considered "full schedules"
+    # Messages with < 6 queues are likely modification-only messages (early start, prolongation, etc.)
+    # Adjust this value if the number of queues in the region changes
+    FULL_SCHEDULE_THRESHOLD = 6
 
     def __init__(
         self,
@@ -24,11 +195,15 @@ class PowercutScraper:
         region_id: str = "dnipro",
         start_date: str = None,
         end_date: str = None,
+        logger: Optional[logging.Logger] = None,
+        session: Optional[requests.Session] = None,
     ):
         self.url = channel_url
         self.region_id = region_id
         self.start_date = start_date
         self.end_date = end_date
+        self.logger = logger or logging.getLogger("cek_scraper")
+        self.session = session or create_session_with_retries()
 
         self.months_uk = {
             "січня": "01",
@@ -48,16 +223,16 @@ class PowercutScraper:
 
         # Set default date range to today and tomorrow if not specified
         kyiv_tz = ZoneInfo("Europe/Kyiv")
-        today = datetime.now(kyiv_tz).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        today = datetime.now(kyiv_tz).replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow = today + timedelta(days=1)
         if not start_date:
             self.start_date = today.strftime("%d.%m.%Y")
+            self.logger.info(f"Using default start_date: {self.start_date} (today)")
         else:
             self.start_date = start_date
         if not end_date:
             self.end_date = tomorrow.strftime("%d.%m.%Y")
+            self.logger.info(f"Using default end_date: {self.end_date} (tomorrow)")
         else:
             self.end_date = end_date
 
@@ -81,14 +256,14 @@ class PowercutScraper:
             # Convert to Unix timestamp for comparison
             today_timestamp = int(today_midnight_kyiv.timestamp())
 
-            print(
+            self.logger.info(
                 f"Cleanup: Current Kyiv time: {now_kyiv.strftime('%Y-%m-%d %H:%M:%S %Z')}"
             )
-            print(f"Cleanup: Today midnight timestamp: {today_timestamp}")
+            self.logger.debug(f"Cleanup: Today midnight timestamp: {today_timestamp}")
 
             # Get all timestamps from the data
             if "fact" not in data or "data" not in data["fact"]:
-                print("Cleanup: No fact data found in JSON")
+                self.logger.warning("Cleanup: No fact data found in JSON")
                 return data
 
             old_timestamps = list(data["fact"]["data"].keys())
@@ -102,14 +277,14 @@ class PowercutScraper:
                     removed_count += 1
                     # Convert timestamp to readable date
                     date_obj = datetime.fromtimestamp(timestamp, tz=kyiv_tz)
-                    print(
+                    self.logger.debug(
                         f"Cleanup: Removed old data for {date_obj.strftime('%Y-%m-%d')}"
                     )
 
             if removed_count == 0:
-                print("Cleanup: No old data to remove")
+                self.logger.info("Cleanup: No old data to remove")
             else:
-                print(f"Cleanup: Removed {removed_count} old date(s)")
+                self.logger.info(f"Cleanup: Removed {removed_count} old date(s)")
 
             # Update the today field
             data["fact"]["today"] = today_timestamp
@@ -117,7 +292,7 @@ class PowercutScraper:
             return data
 
         except Exception as e:
-            print(f"Warning: Cleanup failed: {e}")
+            self.logger.warning(f"Cleanup failed: {e}")
             return data
 
     def scrape_messages(self) -> Dict[str, Dict[float, List[str]]]:
@@ -127,12 +302,21 @@ class PowercutScraper:
             Dict with dates as keys, and dict of queue_number -> time_slots as values
             Example: {"05.12.2025": {1.1: ["07:00-10:00"], 3.1: ["14:00-18:00"]}}
         """
-        print(f"Fetching data from {self.url}")
-        # Fetch the webpage
-        response = requests.get(self.url)
-        if response.status_code != 200:
-            raise Exception(f"Failed to fetch webpage: {response.status_code}")
+        self.logger.info(f"Fetching data from {self.url}")
+
+        try:
+            # Fetch the webpage with timeout
+            response = self.session.get(self.url, timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Timeout while fetching {self.url}")
+            raise Exception(f"Request timeout after 30 seconds")
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to fetch webpage: {e}")
+            raise Exception(f"Failed to fetch webpage: {e}")
+
         content = response.content
+        self.logger.debug(f"Received {len(content)} bytes from {self.url}")
 
         # Parse the webpage content
         soup = BeautifulSoup(content, "html.parser")
@@ -146,7 +330,8 @@ class PowercutScraper:
         today_str = today.strftime("%d.%m.%Y")
 
         # Collect all schedules and modifications from all messages
-        all_schedules = {}
+        # Store messages with their timestamps for prioritization of the latest ones
+        messages_by_date = {}
         modifications_by_date = {}
 
         for message_widget in message_widgets:
@@ -200,7 +385,7 @@ class PowercutScraper:
 
                 # Only process today or future dates
                 if date_obj >= today:
-                    print(
+                    self.logger.debug(
                         f'Processing message posted at: {message_timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if message_timestamp else "Unknown time"} for date {date}'
                     )
 
@@ -208,12 +393,18 @@ class PowercutScraper:
                     schedules_by_queue = self.extract_all_schedules(message_text)
 
                     if schedules_by_queue:
-                        if date not in all_schedules:
-                            all_schedules[date] = {}
-                        for queue_num, time_slots in schedules_by_queue.items():
-                            if queue_num not in all_schedules[date]:
-                                all_schedules[date][queue_num] = []
-                            all_schedules[date][queue_num].extend(time_slots)
+                        # Store message with timestamp for later processing
+                        # Use timestamp or epoch 0 if timestamp is missing
+                        msg_time = (
+                            message_timestamp.timestamp() if message_timestamp else 0
+                        )
+
+                        if date not in messages_by_date:
+                            messages_by_date[date] = []
+
+                        messages_by_date[date].append(
+                            {"timestamp": msg_time, "schedules": schedules_by_queue}
+                        )
 
                     # Extract modifications
                     modifications = self.extract_modifications(message_text)
@@ -222,18 +413,100 @@ class PowercutScraper:
                             modifications_by_date[date] = []
                         modifications_by_date[date].extend(modifications)
 
+        # Process messages: for each date select the best message
+        # Strategy: use the last message published BEFORE the start of the schedule day
+        # This ensures full schedule for the entire day (00:00-24:00)
+        # Messages published during the day only show remaining outages
+        all_schedules = {}
+        for date, messages in messages_by_date.items():
+            # Sort messages by timestamp (latest last)
+            messages.sort(key=lambda x: x["timestamp"])
+
+            # Determine the start of the schedule day (00:00 in Kyiv timezone)
+            date_obj = datetime.strptime(date, "%d.%m.%Y").replace(
+                tzinfo=kyiv_tz, hour=0, minute=0, second=0, microsecond=0
+            )
+            day_start_timestamp = date_obj.timestamp()
+
+            # Find the best message
+            # Strategy 1: Last full message published BEFORE the day starts
+            best_message_before_day = None
+            for msg in reversed(messages):
+                if (
+                    msg["timestamp"] < day_start_timestamp
+                    and len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD
+                ):
+                    best_message_before_day = msg
+                    break
+
+            # Strategy 2: If no messages before day start, look for any full message
+            best_full_message = None
+            if not best_message_before_day:
+                for msg in reversed(messages):
+                    if len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD:
+                        best_full_message = msg
+                        break
+
+            # Strategy 3: If nothing found, take the last available
+            fallback_message = messages[-1] if messages else None
+
+            # Select the best message
+            message_to_use = (
+                best_message_before_day or best_full_message or fallback_message
+            )
+
+            if message_to_use:
+                queue_count = len(message_to_use["schedules"])
+                msg_time = datetime.fromtimestamp(
+                    message_to_use["timestamp"], tz=kyiv_tz
+                )
+
+                # Determine message type for logging
+                if best_message_before_day:
+                    msg_type = "full schedule (published before schedule day)"
+                elif best_full_message:
+                    msg_type = "full schedule"
+                else:
+                    msg_type = "partial schedule"
+
+                self.logger.info(
+                    f"Using {msg_type} for {date} "
+                    f"(posted: {msg_time.strftime('%Y-%m-%d %H:%M')}, {queue_count} queues)"
+                )
+
+                all_schedules[date] = {}
+                for queue_num, time_slots in message_to_use["schedules"].items():
+                    all_schedules[date][queue_num] = time_slots
+
         # Combine time slots for each queue in each date
         for date, queues_schedules in all_schedules.items():
             for queue_num, time_slots in queues_schedules.items():
                 if time_slots:
                     combined = self.combine_time_slots(date, time_slots)
                     all_schedules[date][queue_num] = combined
-                    print(
+                    self.logger.debug(
                         f"Combined schedules for {date}, Queue {queue_num}: {combined}"
                     )
 
+        # Transform modifications from List[tuple] to Dict structure expected by apply_modifications
+        # From: {date: [(queue_num, mod_type, mod_time), ...]}
+        # To: {date: {queue_num: ["MOD:mod_type:mod_time", ...], ...}}
+        # Уникаємо дублювання однакових модифікацій для однієї черги в один день.
+        transformed_mods = {}
+        for date, mod_list in modifications_by_date.items():
+            transformed_mods[date] = {}
+            for queue_num, mod_type, mod_time in mod_list:
+                if queue_num not in transformed_mods[date]:
+                    # Використовуємо множину під час побудови для дедуплікації
+                    transformed_mods[date][queue_num] = set()
+                transformed_mods[date][queue_num].add(f"MOD:{mod_type}:{mod_time}")
+
+        # Перетворюємо множини назад у списки (стабільний відсортований порядок)
+        for date, queues_mods in transformed_mods.items():
+            for queue_num, mods_set in queues_mods.items():
+                transformed_mods[date][queue_num] = sorted(mods_set)
         # Apply modifications to schedules
-        self.apply_modifications(all_schedules, modifications_by_date)
+        self.apply_modifications(all_schedules, transformed_mods)
 
         return all_schedules
 
@@ -267,7 +540,7 @@ class PowercutScraper:
 
                         return msg_datetime_kyiv
         except Exception as e:
-            print(f"Warning: Could not extract message timestamp: {e}")
+            self.logger.warning(f"Could not extract message timestamp: {e}")
 
         return None
 
@@ -318,17 +591,17 @@ class PowercutScraper:
                             schedules[date][queue_num] = self.combine_time_slots(
                                 date, schedules[date][queue_num]
                             )
-                            print(
+                            self.logger.info(
                                 f"Added additional outage {mod_data} to queue {queue_num} on {date}"
                             )
 
                         elif queue_num in schedules[date]:
                             existing_slots = schedules[date][queue_num]
                             modified_slots = self.modify_time_slots(
-                                existing_slots, mod_type, mod_data, date
+                                existing_slots, mod_type, mod_data, date, queue_num
                             )
                             schedules[date][queue_num] = modified_slots
-                            print(
+                            self.logger.info(
                                 f"Applied {mod_type} modification to queue {queue_num} on {date}: {modified_slots}"
                             )
 
@@ -336,12 +609,17 @@ class PowercutScraper:
                             # Remove the queue if cancelled
                             if queue_num in schedules[date]:
                                 del schedules[date][queue_num]
-                                print(
+                                self.logger.info(
                                     f"Cancelled schedule for queue {queue_num} on {date}"
                                 )
 
     def modify_time_slots(
-        self, time_slots: List[str], mod_type: str, mod_time: str, date: str
+        self,
+        time_slots: List[str],
+        mod_type: str,
+        mod_time: str,
+        date: str,
+        queue_num: float = None,
     ) -> List[str]:
         """Modify time slots based on modification type
 
@@ -350,6 +628,7 @@ class PowercutScraper:
             mod_type: 'prolong' or 'early_start'
             mod_time: Time for modification like "13:00"
             date: Date string for parsing
+            queue_num: Queue number for logging (e.g., 2.1)
 
         Returns:
             Modified list of time slots
@@ -358,6 +637,7 @@ class PowercutScraper:
             return time_slots
 
         current_time = datetime.now()
+        queue_str = f" for queue {queue_num}" if queue_num else ""
 
         if mod_type == "prolong":
             # Find which slot to prolong
@@ -387,14 +667,23 @@ class PowercutScraper:
                     ):
                         slot_to_modify = idx
                 except (ValueError, TypeError, KeyError) as e:
-                    print(
-                        f"Warning: failed to parse time slot '{slot}' for date '{date}': {e}",
-                        file=sys.stderr,
+                    self.logger.warning(
+                        f"Failed to parse time slot '{slot}' for date '{date}': {e}"
                     )
                     continue
 
             # If no specific slot found, extend the last one (default behavior)
+            # This fallback is used when no slot is currently ongoing or recently ended
             if slot_to_modify is None:
+                self.logger.info(
+                    f"Prolong fallback: No ongoing or recent slot found{queue_str}. "
+                    f"Extending last slot to {mod_time} as fallback."
+                )
+                if len(time_slots) == 0:
+                    self.logger.error(
+                        f"Cannot apply prolongation{queue_str}: no time slots available"
+                    )
+                    return time_slots  # Return unmodified
                 slot_to_modify = len(time_slots) - 1
 
             # Modify the identified slot
@@ -402,41 +691,54 @@ class PowercutScraper:
             start_time = modified[slot_to_modify].split("-")[0]
             modified[slot_to_modify] = f"{start_time}-{mod_time}"
 
-            print(
-                f"  Prolonging slot {slot_to_modify + 1} of {len(time_slots)}: {time_slots[slot_to_modify]} → {modified[slot_to_modify]}"
+            self.logger.debug(
+                f"  Prolonging slot {slot_to_modify + 1} of {len(time_slots)}{queue_str}: {time_slots[slot_to_modify]} → {modified[slot_to_modify]}"
             )
 
         elif mod_type == "early_start":
             # Find which slot to start earlier
-            # Strategy: Find the first slot that hasn't started yet or is currently ongoing
+            # Strategy: Find the slot that starts closest to or after the early start time
+            # For example, if early start is 07:00, and we have slots 00:00-04:00, 08:00-11:00, 18:00-20:00
+            # we should modify 08:00-11:00 to become 07:00-11:00
             slot_to_modify = None
+            early_start_time = datetime.strptime(f"{date} {mod_time}", "%d.%m.%Y %H:%M")
 
             for idx, slot in enumerate(time_slots):
-                _, end_time_str = slot.split("-")
+                start_time_str, end_time_str = slot.split("-")
                 try:
-
-                    slot_end = datetime.strptime(
-                        f"{date} {end_time_str}", "%d.%m.%Y %H:%M"
+                    slot_start = datetime.strptime(
+                        f"{date} {start_time_str}", "%d.%m.%Y %H:%M"
                     )
 
-                    # Check if this slot hasn't started yet or is ongoing
-                    if current_time <= slot_end:
+                    # Find the first slot that starts at or after the early start time
+                    if slot_start >= early_start_time:
                         slot_to_modify = idx
                         break
-                except:
+                except (ValueError, TypeError) as e:
+                    self.logger.debug(f"Failed to parse slot start time: {e}")
                     continue
 
-            # If no specific slot found, modify the first one (default behavior)
+            # If no specific slot found (all slots start before early start time), modify the last one
+            # This is a fallback for edge cases - log a warning as this may indicate incorrect data
             if slot_to_modify is None:
-                slot_to_modify = 0
+                self.logger.warning(
+                    f"Early start fallback: All time slots start before {mod_time}{queue_str}. "
+                    f"Modifying last slot as fallback. This may indicate incorrect data or timing."
+                )
+                if len(time_slots) == 0:
+                    self.logger.error(
+                        f"Cannot apply early start{queue_str}: no time slots available"
+                    )
+                    return time_slots  # Return unmodified
+                slot_to_modify = len(time_slots) - 1
 
             # Modify the identified slot
             modified = time_slots.copy()
             end_time = modified[slot_to_modify].split("-")[1]
             modified[slot_to_modify] = f"{mod_time}-{end_time}"
 
-            print(
-                f"  Early start for slot {slot_to_modify + 1} of {len(time_slots)}: {time_slots[slot_to_modify]} → {modified[slot_to_modify]}"
+            self.logger.debug(
+                f"  Early start for slot {slot_to_modify + 1} of {len(time_slots)}{queue_str}: {time_slots[slot_to_modify]} → {modified[slot_to_modify]}"
             )
 
         else:
@@ -446,8 +748,9 @@ class PowercutScraper:
         return self.combine_time_slots(date, modified)
 
     def extract_queue_numbers(self, text: str) -> List[float]:
-        """Extract queue numbers from text as floats"""
-        return [float(q) for q in re.findall(r"\d+\.\d+|\d+", text)]
+        """Extract queue numbers from text as floats (only decimal numbers like 1.1, 2.1, not 1, 2, 3)"""
+        # Only decimal numbers (with dot), not simple integers
+        return [float(q) for q in re.findall(r"\d+\.\d+", text)]
 
     def extract_all_schedules(self, message: str) -> Dict[float, List[str]]:
         """Extract schedule time slots for ALL queue numbers found in message
@@ -459,15 +762,19 @@ class PowercutScraper:
         schedules_by_queue = {}
 
         # Pattern: "3.1 черга: з 07:00 до 10:00; з 14:00 до 18:00"
+        # Only decimal numbers (with dot), not simple integers
         pattern = re.compile(
-            r"([\d.]+)\W*черг[аи]:\s*((?:\W+з\s\d{2}:\d{2}\s(?:по|до)\s\d{2}:\d{2};?)+)",
+            r"(\d+\.\d+)\W*черг[аи]:\s*((?:\W+з\s\d{2}:\d{2}\s(?:по|до)\s\d{2}:\d{2};?)+)",
             re.IGNORECASE,
         )
         schedules_pattern = re.compile(r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2})")
 
         for match in pattern.finditer(message):
             queue_info = match.group(1)
-            queue_number = float(queue_info)
+            try:
+                queue_number = float(queue_info)
+            except ValueError:
+                continue
 
             if queue_number not in schedules_by_queue:
                 schedules_by_queue[queue_number] = []
@@ -479,7 +786,8 @@ class PowercutScraper:
                 schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
 
         # Old style schedule matching: "з 07:00 до 10:00 відключається 1, 2, 3.1 черги"
-        #                           or "з 07:00 по 10:00 відключається 1, 2, 3.1 черги"
+        # (from 07:00 to 10:00 is disconnected queues 1, 2, 3.1)
+        # or "з 07:00 по 10:00 відключається 1, 2, 3.1 черги"
         old_pattern = re.compile(
             r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?\sвідключа[ює]ться*([0-9\sта,.;:!?]*черг[аи])+",
             re.IGNORECASE,
@@ -502,9 +810,10 @@ class PowercutScraper:
                     schedules_by_queue[queue_number].append(time_range)
 
         # New style schedule matching for today's format: "📌 1.1 з 15:00 по 22:00"
-        # Find all queue blocks
+        # (📌 1.1 from 15:00 to 22:00)
+        # Find all queue blocks (only decimal numbers like 1.1, 2.1, not integers)
         queue_blocks = re.findall(
-            r"📌\s*([\d.]+)(.*?)(?=📌|$)",
+            r"📌\s*(\d+\.\d+)(.*?)(?=📌|$)",
             message,
             re.IGNORECASE | re.DOTALL,
         )
@@ -522,15 +831,6 @@ class PowercutScraper:
             except ValueError:
                 continue
 
-        # Check for schedule modifications
-        modifications = self.extract_modifications(message)
-        if modifications:
-            for queue_number, mod_type, mod_time in modifications:
-                if queue_number not in schedules_by_queue:
-                    schedules_by_queue[queue_number] = []
-                # Store modification info as special time slot that will be processed later
-                schedules_by_queue[queue_number].append(f"MOD:{mod_type}:{mod_time}")
-
         return schedules_by_queue
 
     def extract_modifications(self, message: str) -> List[tuple]:
@@ -543,7 +843,7 @@ class PowercutScraper:
         modifications = []
         message_lower = message.lower()
 
-        # Pattern for prolongation: "до 13:00 подовжено відключення підчерги 2.1"
+        # Pattern for prolongation: "до 13:00 подовжено відключення підчерги 2.1" (until 13:00 prolonged outage of subqueue 2.1)
         prolong_pattern = re.compile(
             r"до\s(\d{2}:\d{2})\sподовжен[оа]\s+(?:відключення\s+)?(?:під)?черг[аиу]?\s+([\d.,\s]+)",
             re.IGNORECASE,
@@ -555,9 +855,10 @@ class PowercutScraper:
             queue_numbers = self.extract_queue_numbers(queues_str)
             for queue in queue_numbers:
                 modifications.append((queue, "prolong", time))
-                print(f"Found prolongation for queue {queue} until {time}")
+                self.logger.info(f"Found prolongation for queue {queue} until {time}")
 
         # Pattern for additional outage: "з 06:00 до 09:00 додатково застосовуватиметься відключення підчерг 1.1, 1.2 та 3.1"
+        # (from 06:00 to 09:00 additionally applied outage of subqueues 1.1, 1.2 and 3.1)
         # This pattern handles time range (from-to) with multiple queues
         additional_pattern = re.compile(
             r"з\s(\d{2}:\d{2})(?:\s(?:по|до)\s(\d{2}:\d{2}))?\s+додатково\s+(?:застосовуватиметься|застосовується)\s+(?:відключення\s+)?(?:під)?черг[аиу]?\s+([\d.,\sіта]+)",
@@ -568,7 +869,7 @@ class PowercutScraper:
             end_time = match.group(2) if match.group(2) else None
             queues_str = match.group(3)
 
-            # Extract all queue numbers from the string (handles "1.1, 1.2 та 3.1")
+            # Extract all queue numbers from the string (handles "1.1, 1.2 та 3.1" which means "1.1, 1.2 and 3.1")
             queue_numbers = self.extract_queue_numbers(queues_str)
 
             for queue in queue_numbers:
@@ -577,14 +878,16 @@ class PowercutScraper:
                     modifications.append(
                         (queue, "additional", f"{start_time}-{end_time}")
                     )
-                    print(
+                    self.logger.info(
                         f"Found additional outage for queue {queue} from {start_time} to {end_time}"
                     )
                 else:
                     modifications.append((queue, "early_start", start_time))
-                    print(f"Found early start for queue {queue} at {start_time}")
+                    self.logger.info(
+                        f"Found early start for queue {queue} at {start_time}"
+                    )
 
-        # Pattern for cancellation: "скасовано відключення черги 3.1"
+        # Pattern for cancellation: "скасовано відключення черги 3.1" (cancelled outage of queue 3.1)
         cancel_pattern = re.compile(
             r"скасован[оа]\s+(?:відключення\s+)?(?:під)?черг[аиу]?\s+([\d.,\s]+)",
             re.IGNORECASE,
@@ -594,7 +897,7 @@ class PowercutScraper:
             queue_numbers = self.extract_queue_numbers(queues_str)
             for queue in queue_numbers:
                 modifications.append((queue, "cancel", "00:00"))
-                print(f"Found cancellation for queue {queue}")
+                self.logger.info(f"Found cancellation for queue {queue}")
 
         return modifications
 
@@ -615,9 +918,15 @@ class PowercutScraper:
         if not time_slots:
             return []
 
+        # Filter out MOD entries (modifications) - they should be handled separately
+        regular_slots = [slot for slot in time_slots if not slot.startswith("MOD:")]
+
+        if not regular_slots:
+            return []
+
         # Parse and sort the time slots
         slots = []
-        for slot in time_slots:
+        for slot in regular_slots:
             start_time, end_time = slot.split("-")
             if end_time == "24:00":
                 end_time = "23:59"
@@ -677,7 +986,7 @@ class PowercutScraper:
         for date_schedules in schedules.values():
             all_queues.update(date_schedules.keys())
 
-        print(f"Processing schedules for queues: {sorted(all_queues)}")
+        self.logger.debug(f"Processing schedules for queues: {sorted(all_queues)}")
 
         # Process each date and its schedules
         for date_str, queues_schedules in schedules.items():
@@ -909,23 +1218,37 @@ def main():
         "--output", default="out/cek.json", help="Output JSON file path"
     )
     parser.add_argument("--region", default="dnipro", help="Region ID")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
 
     args = parser.parse_args()
 
+    # Setup logging
+    logger = setup_logging(args.log_level)
+
     try:
+        # Create HTTP session with retry logic
+        session = create_session_with_retries()
+
         # Create scraper instance
         scraper = PowercutScraper(
             channel_url=args.url,
             region_id=args.region,
             start_date=args.start_date,
             end_date=args.end_date,
+            logger=logger,
+            session=session,
         )
 
         # Scrape messages for ALL queues
         schedules = scraper.scrape_messages()
 
         if not schedules:
-            print("No schedules found")
+            logger.warning("No schedules found")
             sys.exit(0)
 
         # Count total queues found
@@ -939,28 +1262,41 @@ def main():
             try:
                 with open(args.output, "r", encoding="utf-8") as f:
                     existing_data = json.load(f)
-                print(f"Loaded existing data from {args.output}")
+                logger.info(f"Loaded existing data from {args.output}")
             except Exception as e:
-                print(f"Warning: Could not load existing data: {e}")
+                logger.warning(f"Could not load existing data: {e}")
 
         # Generate JSON
         data = scraper.generate_json(schedules, existing_data)
+
+        # Validate JSON structure before saving
+        if not validate_json_structure(data, logger):
+            logger.error("Generated JSON has invalid structure")
+            sys.exit(1)
 
         # Ensure output directory exists (if a directory is specified)
         output_dir = os.path.dirname(args.output)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
+
         # Save JSON file
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-        print(f"✓ Successfully saved schedules to {args.output}")
-        print(f"  Found schedules for {len(schedules)} date(s)")
-        print(f"  Total queues found: {len(all_queues)} - {sorted(all_queues)}")
+        logger.info(f"✓ Successfully saved schedules to {args.output}")
+        logger.info(f"  Found schedules for {len(schedules)} date(s)")
+        logger.info(f"  Total queues found: {len(all_queues)} - {sorted(all_queues)}")
 
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        sys.exit(0)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        logger.error(f"Error: {e}", exc_info=True)
         sys.exit(1)
+    finally:
+        # Close session if it exists
+        if "session" in locals():
+            session.close()
 
 
 if __name__ == "__main__":
