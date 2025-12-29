@@ -6,7 +6,7 @@ Scrapes electricity outage schedules for ALL queues and outputs to JSON format
 
 import requests
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import re
 import json
@@ -83,10 +83,11 @@ def create_session_with_retries(
     session.mount("http://", adapter)
     session.mount("https://", adapter)
 
-    # User-agent to avoid being blocked
+    # User-Agent актуальний станом на 2025-12, за потреби оновлюйте версію Chrome
+    # щоб уникнути блокувань зі сторони Telegram/веб-серверів.
     session.headers.update(
         {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         }
     )
 
@@ -94,14 +95,15 @@ def create_session_with_retries(
 
 
 def validate_json_structure(data: dict, logger: logging.Logger) -> bool:
-    """Validate JSON structure before saving
+    """Validate JSON structure before saving.
 
     Args:
         data: JSON data for validation
-        logger: Logger for output messages
+        logger: Logger for output messages; validation errors and warnings are
+            logged here with details.
 
     Returns:
-        True if structure is valid, False otherwise
+        True if structure is valid, False otherwise.
     """
     try:
         # Check required fields
@@ -415,8 +417,7 @@ class PowercutScraper:
             messages.sort(key=lambda x: x["timestamp"])
 
             # Determine the start of the schedule day (00:00 in Kyiv timezone)
-            date_obj = datetime.strptime(date, "%d.%m.%Y")
-            date_obj = date_obj.replace(
+            date_obj = datetime.strptime(date, "%d.%m.%Y").replace(
                 tzinfo=kyiv_tz, hour=0, minute=0, second=0, microsecond=0
             )
             day_start_timestamp = date_obj.timestamp()
@@ -486,14 +487,20 @@ class PowercutScraper:
         # Transform modifications from List[tuple] to Dict structure expected by apply_modifications
         # From: {date: [(queue_num, mod_type, mod_time), ...]}
         # To: {date: {queue_num: ["MOD:mod_type:mod_time", ...], ...}}
+        # Уникаємо дублювання однакових модифікацій для однієї черги в один день.
         transformed_mods = {}
         for date, mod_list in modifications_by_date.items():
             transformed_mods[date] = {}
             for queue_num, mod_type, mod_time in mod_list:
                 if queue_num not in transformed_mods[date]:
-                    transformed_mods[date][queue_num] = []
-                transformed_mods[date][queue_num].append(f"MOD:{mod_type}:{mod_time}")
+                    # Використовуємо множину під час побудови для дедуплікації
+                    transformed_mods[date][queue_num] = set()
+                transformed_mods[date][queue_num].add(f"MOD:{mod_type}:{mod_time}")
 
+        # Перетворюємо множини назад у списки (стабільний відсортований порядок)
+        for date, queues_mods in transformed_mods.items():
+            for queue_num, mods_set in queues_mods.items():
+                transformed_mods[date][queue_num] = sorted(mods_set)
         # Apply modifications to schedules
         self.apply_modifications(all_schedules, transformed_mods)
 
