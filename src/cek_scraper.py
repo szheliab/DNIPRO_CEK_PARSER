@@ -487,13 +487,51 @@ class PowercutScraper:
                 for queue_num, time_slots in best_message_before_day["schedules"].items():
                     merged_schedules[queue_num] = time_slots.copy()
 
-                # Then, merge in today's schedule - ADD time slots, don't replace
+                # Then, merge in today's schedule intelligently
+                # Strategy: For overlapping periods, prefer TODAY's schedule (it's more up-to-date)
                 for queue_num, today_slots in best_full_message_today["schedules"].items():
                     if queue_num in merged_schedules:
-                        # Merge: combine both lists and remove duplicates
-                        combined = merged_schedules[queue_num] + today_slots
-                        # The combine_time_slots method will handle overlaps and sorting
-                        merged_schedules[queue_num] = combined
+                        # Smart merge: Remove yesterday's slots that overlap with today's, then add today's
+                        yesterday_slots = merged_schedules[queue_num]
+
+                        # Parse today's time ranges to check for overlaps
+                        today_ranges = []
+                        for slot in today_slots:
+                            if slot.startswith("MOD:"):
+                                continue
+                            start_str, end_str = slot.split("-")
+                            if end_str == "24:00":
+                                end_str = "23:59"
+                            start_time = datetime.strptime(f"{date} {start_str}", "%d.%m.%Y %H:%M")
+                            end_time = datetime.strptime(f"{date} {end_str}", "%d.%m.%Y %H:%M")
+                            today_ranges.append((start_time, end_time))
+
+                        # Filter yesterday's slots: keep only those that DON'T overlap with today's
+                        filtered_yesterday = []
+                        for slot in yesterday_slots:
+                            if slot.startswith("MOD:"):
+                                filtered_yesterday.append(slot)
+                                continue
+
+                            start_str, end_str = slot.split("-")
+                            if end_str == "24:00":
+                                end_str = "23:59"
+                            start_time = datetime.strptime(f"{date} {start_str}", "%d.%m.%Y %H:%M")
+                            end_time = datetime.strptime(f"{date} {end_str}", "%d.%m.%Y %H:%M")
+
+                            # Check if this yesterday slot overlaps with any today slot
+                            overlaps = False
+                            for today_start, today_end in today_ranges:
+                                # Overlap if: start < today_end AND end > today_start
+                                if start_time < today_end and end_time > today_start:
+                                    overlaps = True
+                                    break
+
+                            if not overlaps:
+                                filtered_yesterday.append(slot)
+
+                        # Combine: non-overlapping yesterday slots + all today slots
+                        merged_schedules[queue_num] = filtered_yesterday + today_slots
                     else:
                         # Queue only in today's message
                         merged_schedules[queue_num] = today_slots.copy()
