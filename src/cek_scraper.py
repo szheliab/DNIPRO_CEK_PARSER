@@ -1022,15 +1022,37 @@ class PowercutScraper:
         return modifications
 
     def extract_date(self, message: str) -> Optional[str]:
-        """Extract date from message text"""
-        date_pattern = re.compile(r"(\d{1,2})(?:-го)?\s([а-яА-Я]+)")
+        """Extract date from message text
+
+        Handles year rollover: if extracted month is before current month,
+        assumes next year (e.g., "01 січня" in December → January next year)
+        """
+        # Pattern includes all Ukrainian letters: а-я, і, ї, є, ґ (and their uppercase versions)
+        date_pattern = re.compile(r"(\d{1,2})(?:-го)?\s([а-яА-ЯіІїЇєЄґҐ]+)", re.IGNORECASE)
         match = date_pattern.search(message)
         if match:
             day = match.group(1)
             month_uk = match.group(2).lower()
             if month_uk in self.months_uk:
                 month = self.months_uk[month_uk]
-                return f"{day}.{month}.{self.current_year}"
+
+                # Determine the year - handle year rollover
+                kyiv_tz = ZoneInfo("Europe/Kyiv")
+                now_kyiv = datetime.now(kyiv_tz)
+                current_month = now_kyiv.month
+                extracted_month = int(month)
+
+                # If extracted month is before current month (e.g., January when we're in December),
+                # assume it's for next year
+                year = self.current_year
+                if extracted_month < current_month:
+                    year += 1
+                    self.logger.debug(
+                        f"Year rollover detected: {day}.{month} interpreted as {year} "
+                        f"(current month: {current_month})"
+                    )
+
+                return f"{day}.{month}.{year}"
         return None
 
     def combine_time_slots(self, date: str, time_slots: List[str]) -> List[str]:
@@ -1350,6 +1372,9 @@ def main():
     # Setup logging
     logger = setup_logging(args.log_level)
 
+    # Initialize session to None for proper cleanup
+    session = None
+
     try:
         # Create HTTP session with retry logic
         session = create_session_with_retries()
@@ -1415,7 +1440,7 @@ def main():
         sys.exit(1)
     finally:
         # Close session if it exists
-        if "session" in locals():
+        if session is not None:
             session.close()
 
 
