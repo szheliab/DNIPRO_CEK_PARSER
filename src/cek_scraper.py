@@ -38,9 +38,9 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
     logger = logging.getLogger("cek_scraper")
     logger.setLevel(getattr(logging, log_level.upper()))
 
-    # Console handler
+    # Console handler - respects the log_level parameter
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(getattr(logging, log_level.upper()))
     console_formatter = KyivFormatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S %Z",
@@ -417,7 +417,12 @@ class PowercutScraper:
                         # Store modifications with their message timestamp
                         for mod in modifications:
                             modifications_by_date[date].append(
-                                (mod[0], mod[1], mod[2], msg_time)  # queue, type, time, msg_timestamp
+                                (
+                                    mod[0],
+                                    mod[1],
+                                    mod[2],
+                                    msg_time,
+                                )  # queue, type, time, msg_timestamp
                             )
 
         # Process messages: for each date select the best message
@@ -425,7 +430,9 @@ class PowercutScraper:
         # This ensures full schedule for the entire day (00:00-24:00)
         # Messages published during the day only show remaining outages
         all_schedules = {}
-        base_schedule_timestamps = {}  # Track when the base schedule was posted for each date
+        base_schedule_timestamps = (
+            {}
+        )  # Track when the base schedule was posted for each date
 
         for date, messages in messages_by_date.items():
             # Sort messages by timestamp (latest last)
@@ -461,7 +468,9 @@ class PowercutScraper:
                             )
                     else:
                         # Full schedule before day
-                        if best_message_before_day is None:  # Take the latest one before day
+                        if (
+                            best_message_before_day is None
+                        ):  # Take the latest one before day
                             best_message_before_day = msg
                             self.logger.debug(
                                 f"Found full message before day: {msg_dt.strftime('%Y-%m-%d %H:%M')}, "
@@ -484,12 +493,16 @@ class PowercutScraper:
                 merged_schedules = {}
 
                 # First, add all schedules from yesterday
-                for queue_num, time_slots in best_message_before_day["schedules"].items():
+                for queue_num, time_slots in best_message_before_day[
+                    "schedules"
+                ].items():
                     merged_schedules[queue_num] = time_slots.copy()
 
                 # Then, merge in today's schedule intelligently
                 # Strategy: For overlapping periods, prefer TODAY's schedule (it's more up-to-date)
-                for queue_num, today_slots in best_full_message_today["schedules"].items():
+                for queue_num, today_slots in best_full_message_today[
+                    "schedules"
+                ].items():
                     if queue_num in merged_schedules:
                         # Smart merge: Remove yesterday's slots that overlap with today's, then add today's
                         yesterday_slots = merged_schedules[queue_num]
@@ -502,8 +515,12 @@ class PowercutScraper:
                             start_str, end_str = slot.split("-")
                             if end_str == "24:00":
                                 end_str = "23:59"
-                            start_time = datetime.strptime(f"{date} {start_str}", "%d.%m.%Y %H:%M")
-                            end_time = datetime.strptime(f"{date} {end_str}", "%d.%m.%Y %H:%M")
+                            start_time = datetime.strptime(
+                                f"{date} {start_str}", "%d.%m.%Y %H:%M"
+                            )
+                            end_time = datetime.strptime(
+                                f"{date} {end_str}", "%d.%m.%Y %H:%M"
+                            )
                             today_ranges.append((start_time, end_time))
 
                         # Filter yesterday's slots: keep only those that DON'T overlap with today's
@@ -516,8 +533,12 @@ class PowercutScraper:
                             start_str, end_str = slot.split("-")
                             if end_str == "24:00":
                                 end_str = "23:59"
-                            start_time = datetime.strptime(f"{date} {start_str}", "%d.%m.%Y %H:%M")
-                            end_time = datetime.strptime(f"{date} {end_str}", "%d.%m.%Y %H:%M")
+                            start_time = datetime.strptime(
+                                f"{date} {start_str}", "%d.%m.%Y %H:%M"
+                            )
+                            end_time = datetime.strptime(
+                                f"{date} {end_str}", "%d.%m.%Y %H:%M"
+                            )
 
                             # Check if this yesterday slot overlaps with any today slot
                             overlaps = False
@@ -537,28 +558,38 @@ class PowercutScraper:
                         merged_schedules[queue_num] = today_slots.copy()
 
                 message_to_use = {
-                    "timestamp": best_full_message_today["timestamp"],  # Use today's timestamp
-                    "schedules": merged_schedules
+                    "timestamp": best_full_message_today[
+                        "timestamp"
+                    ],  # Use today's timestamp
+                    "schedules": merged_schedules,
                 }
-                msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
+                msg_time = datetime.fromtimestamp(
+                    message_to_use["timestamp"], tz=kyiv_tz
+                )
                 queue_count = len(merged_schedules)
                 msg_type = "merged schedule (yesterday + today)"
 
             elif best_full_message_today:
                 message_to_use = best_full_message_today
-                msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
+                msg_time = datetime.fromtimestamp(
+                    message_to_use["timestamp"], tz=kyiv_tz
+                )
                 queue_count = len(message_to_use["schedules"])
                 msg_type = "full schedule from today (latest update)"
 
             elif best_message_before_day:
                 message_to_use = best_message_before_day
-                msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
+                msg_time = datetime.fromtimestamp(
+                    message_to_use["timestamp"], tz=kyiv_tz
+                )
                 queue_count = len(message_to_use["schedules"])
                 msg_type = "full schedule (published before schedule day)"
 
             elif fallback_message:
                 message_to_use = fallback_message
-                msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
+                msg_time = datetime.fromtimestamp(
+                    message_to_use["timestamp"], tz=kyiv_tz
+                )
                 queue_count = len(message_to_use["schedules"])
                 msg_type = "partial schedule (fallback)"
             else:
@@ -572,7 +603,7 @@ class PowercutScraper:
             )
 
             # Store the timestamp of the base schedule
-            base_schedule_timestamps[date] = message_to_use['timestamp']
+            base_schedule_timestamps[date] = message_to_use["timestamp"]
 
             # Store schedules
             all_schedules[date] = {}
@@ -980,10 +1011,12 @@ class PowercutScraper:
         # Pattern for additional outage: "з 06:00 до 09:00 додатково застосовуватиметься відключення підчерг 1.1, 1.2 та 3.1"
         # (from 06:00 to 09:00 additionally applied outage of subqueues 1.1, 1.2 and 3.1)
         # This pattern handles time range (from-to) with multiple queues
+        # Supports verb forms: застосовуватиметься, застосовується, застосовуватимуться, застосовуватимується, застосовуватимється
         additional_pattern = re.compile(
-            r"з\s(\d{2}:\d{2})(?:\s(?:по|до)\s(\d{2}:\d{2}))?\s+додатково\s+(?:застосовуватиметься|застосовується)\s+(?:відключення\s+)?(?:під)?черг[аиу]?\s+([\d.,\sіта]+)",
+            r"з\s(\d{2}:\d{2})(?:\s(?:по|до)\s(\d{2}:\d{2}))?\s+додатково\s+(?:застосовуватиметься|застосовується|застосовуватимуться|застосовуватимується|застосовуватимється)\s+(?:відключення\s+)?(?:під)?черг[аиу]?\s+([\d.,\sіта]+)",
             re.IGNORECASE,
         )
+
         for match in additional_pattern.finditer(message):
             start_time = match.group(1)
             end_time = match.group(2) if match.group(2) else None
@@ -1028,7 +1061,9 @@ class PowercutScraper:
         assumes next year (e.g., "01 січня" in December → January next year)
         """
         # Pattern includes all Ukrainian letters: а-я, і, ї, є, ґ (and their uppercase versions)
-        date_pattern = re.compile(r"(\d{1,2})(?:-го)?\s([а-яА-ЯіІїЇєЄґҐ]+)", re.IGNORECASE)
+        date_pattern = re.compile(
+            r"(\d{1,2})(?:-го)?\s([а-яА-ЯіІїЇєЄґҐ]+)", re.IGNORECASE
+        )
         match = date_pattern.search(message)
         if match:
             day = match.group(1)
@@ -1362,7 +1397,7 @@ def main():
     parser.add_argument("--region", default="dnipro", help="Region ID")
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default="DEBUG",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: INFO)",
     )
