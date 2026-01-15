@@ -187,7 +187,10 @@ class PowercutScraper:
     # Messages with >= 6 queues (50%) are considered "full schedules"
     # Messages with < 6 queues are likely modification-only messages (early start, prolongation, etc.)
     # Adjust this value if the number of queues in the region changes
-    FULL_SCHEDULE_THRESHOLD = 6
+    # FULL_SCHEDULE_THRESHOLD = 6
+
+    # Порогове значення для визначення повного розкладу (12 черг)
+    FULL_SCHEDULE_THRESHOLD = 10
 
     def __init__(
         self,
@@ -235,6 +238,42 @@ class PowercutScraper:
             self.logger.info(f"Using default end_date: {self.end_date} (tomorrow)")
         else:
             self.end_date = end_date
+
+    def is_partial_schedule_update(self, message: str) -> bool:
+        """Виявити, чи є повідомлення частковим оновленням графіка (тільки для певного діапазону часу)
+
+        Detect if a message is a partial schedule update (only for specific time range)
+        Examples:
+        - "зміни в ГПВ на 15 січня з 19:00 до 24:00"
+        - "зміни на 15 січня з 19:00"
+        """
+        partial_patterns = [
+            r"зміни.*на\s+\d+\s+[а-яА-ЯіІїЇєЄґҐ]+\s+з\s+\d{2}:\d{2}",
+            r"зміни.*ГПВ.*з\s+\d{2}:\d{2}",
+            r"повідомляємо\s+про\s+зміни.*з\s+\d{2}:\d{2}",
+        ]
+
+        for pattern in partial_patterns:
+            if re.search(pattern, message, re.IGNORECASE):
+                return True
+        return False
+
+    def extract_time_range_from_header(self, message: str) -> Optional[tuple]:
+        """Витягнути діапазон часу з заголовка повідомлення, якщо це часткове оновлення
+
+        Extract time range from message header if it's a partial update
+        Returns: (start_time, end_time) tuple or None
+        Example: ('19:00', '24:00')
+        """
+        # Шукаємо патерн "з HH:MM до HH:MM" в перших 200 символах (область заголовка)
+        # Pattern: "з 19:00 до 24:00" or "з 19:00 по 24:00"
+        header = message[:200]
+        pattern = r"з\s+(\d{2}:\d{2})\s+(?:до|по)\s+(\d{2}:\d{2})"
+        match = re.search(pattern, header, re.IGNORECASE)
+
+        if match:
+            return (match.group(1), match.group(2))
+        return None
 
     def cleanup_old_data(self, data: dict) -> dict:
         """Remove data for dates before today (Kyiv timezone)
@@ -389,6 +428,15 @@ class PowercutScraper:
                         f'Processing message posted at: {message_timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if message_timestamp else "Unknown time"} for date {date}'
                     )
 
+                    # Перевірка, чи є це частковим оновленням графіка
+                    # Check if this is a partial schedule update (e.g., changes for 19:00-24:00)
+                    is_partial = self.is_partial_schedule_update(message_text)
+                    time_range = (
+                        self.extract_time_range_from_header(message_text)
+                        if is_partial
+                        else None
+                    )
+
                     # Extract schedules for ALL queues
                     schedules_by_queue = self.extract_all_schedules(message_text)
 
@@ -402,8 +450,15 @@ class PowercutScraper:
                         if date not in messages_by_date:
                             messages_by_date[date] = []
 
+                        # Помітити повідомлення як часткове оновлення, якщо це так
+                        # Mark message as partial update if applicable
                         messages_by_date[date].append(
-                            {"timestamp": msg_time, "schedules": schedules_by_queue}
+                            {
+                                "timestamp": msg_time,
+                                "schedules": schedules_by_queue,
+                                "is_partial": is_partial,
+                                "time_range": time_range,
+                            }
                         )
 
                     # Extract modifications with timestamp
@@ -444,146 +499,196 @@ class PowercutScraper:
             )
             day_start_timestamp = date_obj.timestamp()
 
-            # Find the best message using improved strategy:
-            # 1. Prefer latest FULL schedule (12 queues) regardless of when posted
-            # 2. Fallback to latest full message before day start
-            # 3. Fallback to any message
-            # This ensures schedule updates posted during the day take precedence
+            # Нова стратегія: розділяємо повідомлення на базові графіки та часткові оновлення
+            # New strategy: separate messages into base schedules and partial updates
+            # 1. Find the latest FULL schedule (not marked as partial)
+            # 2. Collect all PARTIAL updates posted after the base schedule
+            # 3. Merge them intelligently
 
-            best_full_message_today = None
-            best_message_before_day = None
+            base_schedule_message = None
+            partial_updates = []
 
-            # Look for full schedule messages (12 queues)
-            # We need to check ALL messages to find both today's and yesterday's
+            # Separate full schedules from partial updates
             for msg in reversed(messages):
-                if len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD:
-                    msg_dt = datetime.fromtimestamp(msg["timestamp"], tz=kyiv_tz)
-                    if msg["timestamp"] >= day_start_timestamp:
-                        # Full schedule posted during the schedule day
-                        if best_full_message_today is None:  # Take the latest one
-                            best_full_message_today = msg
-                            self.logger.debug(
-                                f"Found full message from today: {msg_dt.strftime('%Y-%m-%d %H:%M')}, "
-                                f"{len(msg['schedules'])} queues"
-                            )
-                    else:
-                        # Full schedule before day
-                        if (
-                            best_message_before_day is None
-                        ):  # Take the latest one before day
-                            best_message_before_day = msg
-                            self.logger.debug(
-                                f"Found full message before day: {msg_dt.strftime('%Y-%m-%d %H:%M')}, "
-                                f"{len(msg['schedules'])} queues"
-                            )
+                is_full = len(msg["schedules"]) >= self.FULL_SCHEDULE_THRESHOLD
+                is_partial = msg.get("is_partial", False)
 
-            # Strategy 3: If nothing found, take the last available
+                if is_full and not is_partial:
+                    # This is a full schedule - use as base if we don't have one yet
+                    if base_schedule_message is None:
+                        base_schedule_message = msg
+                        msg_dt = datetime.fromtimestamp(msg["timestamp"], tz=kyiv_tz)
+                        self.logger.debug(
+                            f"Found base schedule: {msg_dt.strftime('%Y-%m-%d %H:%M')}, "
+                            f"{len(msg['schedules'])} queues"
+                        )
+                elif is_partial:
+                    # This is a partial update - collect it
+                    partial_updates.append(msg)
+                    msg_dt = datetime.fromtimestamp(msg["timestamp"], tz=kyiv_tz)
+                    time_range = msg.get("time_range", "unknown")
+                    self.logger.debug(
+                        f"Found partial update: {msg_dt.strftime('%Y-%m-%d %H:%M')}, "
+                        f"time range: {time_range}, {len(msg['schedules'])} queues"
+                    )
+
+            # Fallback: if no base schedule found, use the latest message as base
             fallback_message = messages[-1] if messages else None
 
-            # Select and potentially merge messages for complete coverage
-            if best_full_message_today and best_message_before_day:
-                # Special case: Merge schedules from both messages
-                # Yesterday's message: has full day including morning (00:00-12:00)
-                # Today's message: has updated afternoon/evening (12:00-24:00)
-                self.logger.info(
-                    f"Merging schedules for {date}: base from yesterday + updates from today"
+            # Process base schedule and apply partial updates
+            if base_schedule_message:
+                message_to_use = base_schedule_message
+                msg_time = datetime.fromtimestamp(
+                    message_to_use["timestamp"], tz=kyiv_tz
                 )
+                queue_count = len(message_to_use["schedules"])
+                msg_type = "base schedule"
 
-                # Start with yesterday's schedule
+                # Start with the base schedule
                 merged_schedules = {}
-
-                # First, add all schedules from yesterday
-                for queue_num, time_slots in best_message_before_day[
-                    "schedules"
-                ].items():
+                for queue_num, time_slots in base_schedule_message["schedules"].items():
                     merged_schedules[queue_num] = time_slots.copy()
 
-                # Then, merge in today's schedule intelligently
-                # Strategy: For overlapping periods, prefer TODAY's schedule (it's more up-to-date)
-                for queue_num, today_slots in best_full_message_today[
-                    "schedules"
-                ].items():
-                    if queue_num in merged_schedules:
-                        # Smart merge: Remove yesterday's slots that overlap with today's, then add today's
-                        yesterday_slots = merged_schedules[queue_num]
-
-                        # Parse today's time ranges to check for overlaps
-                        today_ranges = []
-                        for slot in today_slots:
-                            if slot.startswith("MOD:"):
-                                continue
-                            start_str, end_str = slot.split("-")
-                            if end_str == "24:00":
-                                end_str = "23:59"
-                            start_time = datetime.strptime(
-                                f"{date} {start_str}", "%d.%m.%Y %H:%M"
-                            )
-                            end_time = datetime.strptime(
-                                f"{date} {end_str}", "%d.%m.%Y %H:%M"
-                            )
-                            today_ranges.append((start_time, end_time))
-
-                        # Filter yesterday's slots: keep only those that DON'T overlap with today's
-                        filtered_yesterday = []
-                        for slot in yesterday_slots:
-                            if slot.startswith("MOD:"):
-                                filtered_yesterday.append(slot)
-                                continue
-
-                            start_str, end_str = slot.split("-")
-                            if end_str == "24:00":
-                                end_str = "23:59"
-                            start_time = datetime.strptime(
-                                f"{date} {start_str}", "%d.%m.%Y %H:%M"
-                            )
-                            end_time = datetime.strptime(
-                                f"{date} {end_str}", "%d.%m.%Y %H:%M"
+                # Apply partial updates in chronological order (oldest first)
+                partial_updates.reverse()  # They were collected in reverse order
+                for partial_msg in partial_updates:
+                    # Only apply updates that were posted after the base schedule
+                    if partial_msg["timestamp"] > base_schedule_message["timestamp"]:
+                        time_range = partial_msg.get("time_range")
+                        if time_range:
+                            start_time_str, end_time_str = time_range
+                            self.logger.info(
+                                f"Applying partial update for time range {start_time_str}-{end_time_str}"
                             )
 
-                            # Check if this yesterday slot overlaps with any today slot
-                            overlaps = False
-                            for today_start, today_end in today_ranges:
-                                # Overlap if: start < today_end AND end > today_start
-                                if start_time < today_end and end_time > today_start:
-                                    overlaps = True
-                                    break
+                            # For each queue in the partial update
+                            for queue_num, update_slots in partial_msg[
+                                "schedules"
+                            ].items():
+                                if queue_num not in merged_schedules:
+                                    merged_schedules[queue_num] = []
 
-                            if not overlaps:
-                                filtered_yesterday.append(slot)
+                                # Remove slots from base schedule that overlap with the update time range
+                                # Smart logic: split slots if they partially overlap
+                                filtered_slots = []
+                                # Handle 24:00 edge case
+                                update_start_str = start_time_str
+                                update_end_str = (
+                                    end_time_str if end_time_str != "24:00" else "23:59"
+                                )
+                                update_start = datetime.strptime(
+                                    f"{date} {update_start_str}", "%d.%m.%Y %H:%M"
+                                )
+                                update_end = datetime.strptime(
+                                    f"{date} {update_end_str}", "%d.%m.%Y %H:%M"
+                                )
 
-                        # Combine: non-overlapping yesterday slots + all today slots
-                        merged_schedules[queue_num] = filtered_yesterday + today_slots
-                    else:
-                        # Queue only in today's message
-                        merged_schedules[queue_num] = today_slots.copy()
+                                for slot in merged_schedules[queue_num]:
+                                    if slot.startswith("MOD:"):
+                                        filtered_slots.append(slot)
+                                        continue
 
+                                    slot_start_str, slot_end_str = slot.split("-")
+                                    if slot_end_str == "24:00":
+                                        slot_end_str = "23:59"
+                                    slot_start = datetime.strptime(
+                                        f"{date} {slot_start_str}", "%d.%m.%Y %H:%M"
+                                    )
+                                    slot_end = datetime.strptime(
+                                        f"{date} {slot_end_str}", "%d.%m.%Y %H:%M"
+                                    )
+
+                                    # Check for overlap: slots overlap if start < other_end AND end > other_start
+                                    overlaps = (
+                                        slot_start < update_end
+                                        and slot_end > update_start
+                                    )
+
+                                    if not overlaps:
+                                        # No overlap - keep the entire slot
+                                        filtered_slots.append(slot)
+                                    else:
+                                        # Partial or full overlap - need to handle carefully
+                                        # Case 1: Slot completely within update range - skip it
+                                        if (
+                                            slot_start >= update_start
+                                            and slot_end <= update_end
+                                        ):
+                                            self.logger.debug(
+                                                f"  Removing slot {slot} for queue {queue_num} (fully within update range)"
+                                            )
+                                            continue
+
+                                        # Case 2: Slot partially overlaps at the end - keep the part before update
+                                        if (
+                                            slot_start < update_start
+                                            and slot_end > update_start
+                                        ):
+                                            # Keep the part from slot_start to update_start
+                                            new_slot = (
+                                                f"{slot_start_str}-{update_start_str}"
+                                            )
+                                            filtered_slots.append(new_slot)
+                                            self.logger.debug(
+                                                f"  Trimming slot {slot} to {new_slot} for queue {queue_num}"
+                                            )
+
+                                        # Case 3: Slot partially overlaps at the beginning - keep the part after update
+                                        if (
+                                            slot_start < update_end
+                                            and slot_end > update_end
+                                        ):
+                                            # Keep the part from update_end to slot_end
+                                            new_end_str = slot.split("-")[
+                                                1
+                                            ]  # Preserve original format (24:00 if it was 24:00)
+                                            new_slot = f"{update_end_str}-{new_end_str}"
+                                            filtered_slots.append(new_slot)
+                                            self.logger.debug(
+                                                f"  Trimming slot {slot} to {new_slot} for queue {queue_num}"
+                                            )
+
+                                        # Case 4: Update range completely within slot - split into two parts
+                                        # This shouldn't normally happen with our data, but handle it anyway
+                                        if (
+                                            slot_start < update_start
+                                            and slot_end > update_end
+                                        ):
+                                            new_slot_1 = (
+                                                f"{slot_start_str}-{update_start_str}"
+                                            )
+                                            new_slot_2 = (
+                                                f"{update_end_str}-{slot.split('-')[1]}"
+                                            )
+                                            filtered_slots.append(new_slot_1)
+                                            filtered_slots.append(new_slot_2)
+                                            self.logger.debug(
+                                                f"  Splitting slot {slot} into {new_slot_1} and {new_slot_2} for queue {queue_num}"
+                                            )
+
+                                # Add the new slots from the partial update
+                                merged_schedules[queue_num] = (
+                                    filtered_slots + update_slots
+                                )
+                        else:
+                            # No time range specified - apply to entire day
+                            self.logger.warning(
+                                f"Partial update without time range - applying to full day"
+                            )
+                            for queue_num, update_slots in partial_msg[
+                                "schedules"
+                            ].items():
+                                merged_schedules[queue_num] = update_slots
+
+                # Update the message to use with merged schedules
                 message_to_use = {
-                    "timestamp": best_full_message_today[
-                        "timestamp"
-                    ],  # Use today's timestamp
+                    "timestamp": base_schedule_message["timestamp"],
                     "schedules": merged_schedules,
                 }
-                msg_time = datetime.fromtimestamp(
-                    message_to_use["timestamp"], tz=kyiv_tz
+                msg_type = (
+                    f"base schedule with {len(partial_updates)} partial update(s)"
                 )
                 queue_count = len(merged_schedules)
-                msg_type = "merged schedule (yesterday + today)"
-
-            elif best_full_message_today:
-                message_to_use = best_full_message_today
-                msg_time = datetime.fromtimestamp(
-                    message_to_use["timestamp"], tz=kyiv_tz
-                )
-                queue_count = len(message_to_use["schedules"])
-                msg_type = "full schedule from today (latest update)"
-
-            elif best_message_before_day:
-                message_to_use = best_message_before_day
-                msg_time = datetime.fromtimestamp(
-                    message_to_use["timestamp"], tz=kyiv_tz
-                )
-                queue_count = len(message_to_use["schedules"])
-                msg_type = "full schedule (published before schedule day)"
 
             elif fallback_message:
                 message_to_use = fallback_message
@@ -591,12 +696,13 @@ class PowercutScraper:
                     message_to_use["timestamp"], tz=kyiv_tz
                 )
                 queue_count = len(message_to_use["schedules"])
-                msg_type = "partial schedule (fallback)"
+                msg_type = "fallback message"
             else:
                 # No messages at all for this date
                 continue
 
             # Log the selected message
+            msg_time = datetime.fromtimestamp(message_to_use["timestamp"], tz=kyiv_tz)
             self.logger.info(
                 f"Using {msg_type} for {date} "
                 f"(posted: {msg_time.strftime('%Y-%m-%d %H:%M')}, {queue_count} queues)"
@@ -982,6 +1088,13 @@ class PowercutScraper:
             except ValueError:
                 continue
 
+        # Видалити дублікати з кожної черги / Remove duplicates from each queue
+        for queue_num in schedules_by_queue:
+            # Use dict.fromkeys() to preserve order while removing duplicates
+            schedules_by_queue[queue_num] = list(
+                dict.fromkeys(schedules_by_queue[queue_num])
+            )
+
         return schedules_by_queue
 
     def extract_modifications(self, message: str) -> List[tuple]:
@@ -1008,19 +1121,53 @@ class PowercutScraper:
                 modifications.append((queue, "prolong", time))
                 self.logger.info(f"Found prolongation for queue {queue} until {time}")
 
-        # Pattern for additional outage: "з 06:00 до 09:00 додатково застосовуватиметься відключення підчерг 1.1, 1.2 та 3.1"
+        # Pattern for additional outage: handles multiple word orders
+        # Pattern 1: "з 06:00 до 09:00 додатково застосовуватиметься відключення підчерг 1.1, 1.2 та 3.1"
+        # Pattern 2: "відключення підчерг 2.2 додатково застосовуватимується з 00:00 до 05:30"
         # (from 06:00 to 09:00 additionally applied outage of subqueues 1.1, 1.2 and 3.1)
-        # This pattern handles time range (from-to) with multiple queues
         # Supports verb forms: застосовуватиметься, застосовується, застосовуватимуться, застосовуватимується, застосовуватимється
-        additional_pattern = re.compile(
+
+        # Pattern 1: Time first
+        additional_pattern_1 = re.compile(
             r"з\s(\d{2}:\d{2})(?:\s(?:по|до)\s(\d{2}:\d{2}))?\s+додатково\s+(?:застосовуватиметься|застосовується|застосовуватимуться|застосовуватимується|застосовуватимється)\s+(?:відключення\s+)?(?:під)?черг[аиу]?\s+([\d.,\sіта]+)",
             re.IGNORECASE,
         )
 
-        for match in additional_pattern.finditer(message):
+        for match in additional_pattern_1.finditer(message):
             start_time = match.group(1)
             end_time = match.group(2) if match.group(2) else None
             queues_str = match.group(3)
+
+            # Extract all queue numbers from the string (handles "1.1, 1.2 та 3.1" which means "1.1, 1.2 and 3.1")
+            queue_numbers = self.extract_queue_numbers(queues_str)
+
+            for queue in queue_numbers:
+                # If there's an end time, this is a new outage slot, not just early start
+                if end_time:
+                    modifications.append(
+                        (queue, "additional", f"{start_time}-{end_time}")
+                    )
+                    self.logger.info(
+                        f"Found additional outage for queue {queue} from {start_time} to {end_time}"
+                    )
+                else:
+                    modifications.append((queue, "early_start", start_time))
+                    self.logger.info(
+                        f"Found early start for queue {queue} at {start_time}"
+                    )
+
+        # Pattern 2: Queue first - "відключення підчерг 2.2 додатково застосовуватимується з 00:00 до 05:30"
+        # Also handles: "підчерги 3.2 з 02:00 до 05:00" (continuation after comma)
+        # More flexible pattern to handle various word forms and whitespace
+        additional_pattern_2 = re.compile(
+            r"під(?:черг[аиуі]*)\s+([\d.]+)\s+(?:додатково\s+)?(?:застосовуватиметься|застосовується|застосовуватимуться|застосовуватимується|застосовуватимється)?\s*з\s+(\d{2}:\d{2})(?:\s+(?:по|до)\s+(\d{2}:\d{2}))?",
+            re.IGNORECASE,
+        )
+
+        for match in additional_pattern_2.finditer(message):
+            queues_str = match.group(1)
+            start_time = match.group(2)
+            end_time = match.group(3) if match.group(3) else None
 
             # Extract all queue numbers from the string (handles "1.1, 1.2 та 3.1" which means "1.1, 1.2 and 3.1")
             queue_numbers = self.extract_queue_numbers(queues_str)
