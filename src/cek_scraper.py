@@ -1007,7 +1007,9 @@ class PowercutScraper:
     def extract_queue_numbers(self, text: str) -> List[float]:
         """Extract queue numbers from text as floats (only decimal numbers like 1.1, 2.1, not 1, 2, 3)"""
         # Only decimal numbers (with dot), not simple integers
-        return [float(q) for q in re.findall(r"\d+\.\d+", text)]
+        # Pattern: \b\d\.\d\b matches exactly X.Y format (single digit before and after dot)
+        # with word boundaries to avoid matching fragments like 0.1 from 10.1
+        return [float(q) for q in re.findall(r"\b\d\.\d\b", text)]
 
     def extract_all_schedules(self, message: str) -> Dict[float, List[str]]:
         """Extract schedule time slots for ALL queue numbers found in message
@@ -1020,8 +1022,9 @@ class PowercutScraper:
 
         # Pattern: "3.1 черга: з 07:00 до 10:00; з 14:00 до 18:00"
         # Only decimal numbers (with dot), not simple integers
+        # Pattern: \d\.\d matches exactly X.Y format (single digit before and after dot)
         pattern = re.compile(
-            r"(\d+\.\d+)\W*черг[аи]:\s*((?:\W+з\s\d{2}:\d{2}\s(?:по|до)\s\d{2}:\d{2};?)+)",
+            r"(\d\.\d)\W*черг[аи]:\s*((?:\W+з\s\d{2}:\d{2}\s(?:по|до)\s\d{2}:\d{2};?)+)",
             re.IGNORECASE,
         )
         schedules_pattern = re.compile(r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2})")
@@ -1069,8 +1072,9 @@ class PowercutScraper:
         # New style schedule matching for today's format: "📌 1.1 з 15:00 по 22:00"
         # (📌 1.1 from 15:00 to 22:00)
         # Find all queue blocks (only decimal numbers like 1.1, 2.1, not integers)
+        # Pattern: \d\.\d matches exactly X.Y format (single digit before and after dot)
         queue_blocks = re.findall(
-            r"📌\s*(\d+\.\d+)(.*?)(?=📌|$)",
+            r"📌\s*(\d\.\d)(.*?)(?=📌|$)",
             message,
             re.IGNORECASE | re.DOTALL,
         )
@@ -1083,6 +1087,28 @@ class PowercutScraper:
                 time_slots = re.findall(
                     r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2})", block, re.IGNORECASE
                 )
+                for start_time, end_time in time_slots:
+                    schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
+            except ValueError:
+                continue
+
+        # "Черга X.X" format: Works with any emoji or bullet (🔹, 📌, -, •, etc.)
+        # Example: "🔹 Черга 1.1\n10:00-12:00\n14:00-20:00"
+        # Pattern matches "Черга" keyword followed by queue number, regardless of prefix emoji
+        # Matches until next "Черга", "Попереджаємо", or end of message
+        # Pattern: \d\.\d matches exactly X.Y format (word boundaries removed to handle HTML without spaces)
+        cherga_queue_blocks = re.findall(
+            r"Черга\s*(\d\.\d)(.*?)(?=Черга|Попереджаємо|$)",
+            message,
+            re.IGNORECASE | re.DOTALL,
+        )
+        for queue_info, block in cherga_queue_blocks:
+            try:
+                queue_number = float(queue_info)
+                if queue_number not in schedules_by_queue:
+                    schedules_by_queue[queue_number] = []
+                # Find all time slots in format HH:MM-HH:MM (without "з" and "до" keywords)
+                time_slots = re.findall(r"(\d{2}:\d{2})-(\d{2}:\d{2})", block)
                 for start_time, end_time in time_slots:
                     schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
             except ValueError:
