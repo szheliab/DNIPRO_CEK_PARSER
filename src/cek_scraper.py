@@ -1133,7 +1133,7 @@ class PowercutScraper:
         modifications = []
         message_lower = message.lower()
 
-        # Pattern for prolongation: "до 13:00 подовжено відключення підчерги 2.1" or "до 13:00 подовжено відключення підгрупи 2.1"
+        # Pattern for prolongation variant 1: "до 13:00 подовжено відключення підчерги 2.1" or "до 13:00 подовжено відключення підгрупи 2.1"
         prolong_pattern = re.compile(
             r"до\s(\d{2}:\d{2})\sподовжен[оа]\s+(?:відключення\s+)?(?:під)?(?:черг|груп)[аиуіоє]?\s+([\d.,\s]+)",
             re.IGNORECASE,
@@ -1146,6 +1146,39 @@ class PowercutScraper:
             for queue in queue_numbers:
                 modifications.append((queue, "prolong", time))
                 self.logger.info(f"Found prolongation for queue {queue} until {time}")
+
+        # Pattern for prolongation variant 2: "подовжується відключення підчерг 1.2 та 2.2 до 22:00" or "подовжується відключення підгруп 1.2 та 2.2 до 22:00"
+        # This handles the format where queues are listed first, then the time
+        prolong_pattern_2 = re.compile(
+            r"подовжується\s+(?:відключення\s+)?(?:під)?(?:черг|груп)[аиуіоє]?\s+([\d.,\sіта]+?)\s+до\s+(\d{2}:\d{2})",
+            re.IGNORECASE,
+        )
+        for match in prolong_pattern_2.finditer(message):
+            queues_str = match.group(1)
+            time = match.group(2)
+            # Extract all queue numbers from the string (handles "1.2 та 2.2" which means "1.2 and 2.2")
+            queue_numbers = self.extract_queue_numbers(queues_str)
+            for queue in queue_numbers:
+                modifications.append((queue, "prolong", time))
+                self.logger.info(f"Found prolongation for queue {queue} until {time}")
+
+        # Pattern for prolongation variant 3: Continuation after comma ", підчерг 3.1 та 3.2 до 24:00"
+        # This handles messages like: "подовжується відключення підчерг 1.2 та 2.2 до 22:00, підчерг 3.1 та 3.2 до 24:00"
+        # where the second part doesn't repeat the verb
+        prolong_pattern_3 = re.compile(
+            r",\s*(?:під)?(?:черг|груп)[аиуіоє]?\s+([\d.,\sіта]+?)\s+до\s+(\d{2}:\d{2})",
+            re.IGNORECASE,
+        )
+        for match in prolong_pattern_3.finditer(message):
+            # Only process if this appears in a prolongation context (check if "подовжується" is in the message)
+            if "подовжується" in message.lower() or "подовжено" in message.lower():
+                queues_str = match.group(1)
+                time = match.group(2)
+                # Extract all queue numbers from the string
+                queue_numbers = self.extract_queue_numbers(queues_str)
+                for queue in queue_numbers:
+                    modifications.append((queue, "prolong", time))
+                    self.logger.info(f"Found prolongation (continuation) for queue {queue} until {time}")
 
         # Pattern for additional outage: handles multiple word orders
         # Pattern 1: "з 06:00 до 09:00 додатково застосовуватиметься відключення підчерг 1.1, 1.2 та 3.1" or "з 06:00 до 09:00 додатково застосовуватиметься відключення підгруп 1.1, 1.2 та 3.1"
