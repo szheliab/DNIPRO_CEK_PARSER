@@ -1043,6 +1043,10 @@ class PowercutScraper:
             for schedule in schedules_info:
                 start_time = schedule.group(1)
                 end_time = schedule.group(2)
+                # Normalize end time: if end is 00:00 and start is not 00:00, convert to 24:00
+                if end_time == "00:00" and start_time != "00:00":
+                    end_time = "24:00"
+                    self.logger.debug(f"Normalized time range {start_time}-00:00 to {start_time}-24:00 for queue {queue_number}")
                 schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
 
         # Old style schedule matching: "з 07:00 до 10:00 відключається 1, 2, 3.1 черги" or "з 07:00 до 10:00 відключається 1, 2, 3.1 групи"
@@ -1058,6 +1062,10 @@ class PowercutScraper:
             for match in matches:
                 start_time = match[0]
                 end_time = match[1]
+                # Normalize end time: if end is 00:00 and start is not 00:00, convert to 24:00
+                if end_time == "00:00" and start_time != "00:00":
+                    end_time = "24:00"
+                    self.logger.debug(f"Normalized time range {start_time}-00:00 to {start_time}-24:00")
                 time_range = f"{start_time}-{end_time}"
                 queue_info = match[2]
 
@@ -1088,6 +1096,10 @@ class PowercutScraper:
                     r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2})", block, re.IGNORECASE
                 )
                 for start_time, end_time in time_slots:
+                    # Normalize end time: if end is 00:00 and start is not 00:00, convert to 24:00
+                    if end_time == "00:00" and start_time != "00:00":
+                        end_time = "24:00"
+                        self.logger.debug(f"Normalized time range {start_time}-00:00 to {start_time}-24:00 for queue {queue_number}")
                     schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
             except ValueError:
                 continue
@@ -1110,6 +1122,11 @@ class PowercutScraper:
                 # Find all time slots in format HH:MM-HH:MM (without "з" and "до" keywords)
                 time_slots = re.findall(r"(\d{2}:\d{2})-(\d{2}:\d{2})", block)
                 for start_time, end_time in time_slots:
+                    # Normalize end time: if end is 00:00 and start is not 00:00, convert to 24:00
+                    # This handles cases like 20:00-00:00 which means 20:00-24:00 (until midnight)
+                    if end_time == "00:00" and start_time != "00:00":
+                        end_time = "24:00"
+                        self.logger.debug(f"Normalized time range {start_time}-00:00 to {start_time}-24:00 for queue {queue_number}")
                     schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
             except ValueError:
                 continue
