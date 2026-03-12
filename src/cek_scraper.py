@@ -192,6 +192,17 @@ class PowercutScraper:
     # Порогове значення для визначення повного розкладу (12 черг)
     FULL_SCHEDULE_THRESHOLD = 10
 
+    # Повний перелік усіх черг Дніпровського регіону
+    # All known queues for the Dnipro region - used to fill missing queues with empty schedules
+    ALL_KNOWN_QUEUES = [
+        "GPV1.1", "GPV1.2",
+        "GPV2.1", "GPV2.2",
+        "GPV3.1", "GPV3.2",
+        "GPV4.1", "GPV4.2",
+        "GPV5.1", "GPV5.2",
+        "GPV6.1", "GPV6.2",
+    ]
+
     def __init__(
         self,
         channel_url: str,
@@ -1418,6 +1429,15 @@ class PowercutScraper:
                 # Update hours based on outage schedules
                 hours_data = self.create_hours_from_schedules(time_slots)
                 data["fact"]["data"][timestamp_key][queue_key] = hours_data
+
+            # Доповнити відсутні черги порожніми даними (всі години = "yes")
+            # Fill in any missing known queues with all-"yes" hours (no outages = power available)
+            for queue_key in self.ALL_KNOWN_QUEUES:
+                if queue_key not in data["fact"]["data"][timestamp_key]:
+                    data["fact"]["data"][timestamp_key][queue_key] = self.create_default_hours()
+                    self.logger.debug(
+                        f"Added empty schedule (all 'yes') for missing queue {queue_key} on {date_str}"
+                    )
 
         # Set today's timestamp (using Kyiv timezone)
         kyiv_tz = ZoneInfo("Europe/Kyiv")
