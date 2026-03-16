@@ -40,7 +40,7 @@ jobs:
             --region dnipro \
             --log-level DEBUG
 
-      - name: Check if fact.data changed
+      - name: Check if fact data or today changed
         id: fact_diff
         run: |
           set -e
@@ -51,8 +51,8 @@ jobs:
             exit 0
           fi
 
-          jq -cS '.fact.data' out/cek.json > /tmp/new_fact.json
-          git show HEAD:out/cek.json | jq -cS '.fact.data' > /tmp/old_fact.json
+          jq -cS '{data: .fact.data, today: .fact.today}' out/cek.json > /tmp/new_fact.json
+          git show HEAD:out/cek.json | jq -cS '{data: .fact.data, today: .fact.today}' > /tmp/old_fact.json
 
           if diff -q /tmp/old_fact.json /tmp/new_fact.json >/dev/null; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
