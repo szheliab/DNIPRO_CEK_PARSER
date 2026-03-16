@@ -1,0 +1,41 @@
+2026-03-16 07:54:51 [gener_im_full] ▶️ Запускаю генерацію зображень з /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/cek.json
+2026-03-16 07:54:51 [gener_im_full] Знайдено дату для СЬОГОДНІ: 1773612000 (16.03.2026)
+2026-03-16 07:54:51 [gener_im_full] 📅 Буде згенеровано 1 зображень(я)
+2026-03-16 07:54:51 [gener_im_full] 🖼️ Генерую gpv-all-today.png для дати 16.03.2026
+2026-03-16 07:54:52 [gener_im_full] ✅ Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-all-today.png
+2026-03-16 07:54:56 [gener_im_1_G] Використовується JSON: /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/cek.json
+2026-03-16 07:54:56 [gener_im_1_G] Завантажено JSON: cek.json
+2026-03-16 07:54:56 [gener_im_1_G] Знайдені групи: ['GPV1.2', 'GPV5.1', 'GPV1.1', 'GPV2.1', 'GPV2.2', 'GPV3.1', 'GPV3.2', 'GPV4.1', 'GPV4.2', 'GPV5.2', 'GPV6.1', 'GPV6.2']
+2026-03-16 07:54:56 [gener_im_1_G] ▶ Генерую для GPV1.2…
+2026-03-16 07:54:56 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-1-2-emergency.png
+2026-03-16 07:54:56 [gener_im_1_G] ▶ Генерую для GPV5.1…
+2026-03-16 07:54:57 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-5-1-emergency.png
+2026-03-16 07:54:57 [gener_im_1_G] ▶ Генерую для GPV1.1…
+2026-03-16 07:54:57 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-1-1-emergency.png
+2026-03-16 07:54:57 [gener_im_1_G] ▶ Генерую для GPV2.1…
+2026-03-16 07:54:58 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-2-1-emergency.png
+2026-03-16 07:54:58 [gener_im_1_G] ▶ Генерую для GPV2.2…
+2026-03-16 07:54:58 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-2-2-emergency.png
+2026-03-16 07:54:58 [gener_im_1_G] ▶ Генерую для GPV3.1…
+2026-03-16 07:54:58 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-3-1-emergency.png
+2026-03-16 07:54:58 [gener_im_1_G] ▶ Генерую для GPV3.2…
+2026-03-16 07:54:59 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-3-2-emergency.png
+2026-03-16 07:54:59 [gener_im_1_G] ▶ Генерую для GPV4.1…
+2026-03-16 07:54:59 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-4-1-emergency.png
+2026-03-16 07:54:59 [gener_im_1_G] ▶ Генерую для GPV4.2…
+2026-03-16 07:55:00 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-4-2-emergency.png
+2026-03-16 07:55:00 [gener_im_1_G] ▶ Генерую для GPV5.2…
+2026-03-16 07:55:00 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-5-2-emergency.png
+2026-03-16 07:55:00 [gener_im_1_G] ▶ Генерую для GPV6.1…
+2026-03-16 07:55:01 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-6-1-emergency.png
+2026-03-16 07:55:01 [gener_im_1_G] ▶ Генерую для GPV6.2…
+2026-03-16 07:55:01 [gener_im_1_G] Збережено /home/runner/work/DNIPRO_CEK_PARSER/DNIPRO_CEK_PARSER/out/images/gpv-6-2-emergency.png
+2026-03-16 07:55:01 [gener_im_1_G] ✅ Генерація завершена успішно
+2026-03-16 07:55:13 [gener_im_full] Знайдено дату для ЗАВТРА: 1773698400 (17.03.2026)
+2026-03-16 07:55:13 [gener_im_full] Немає даних для СЬОГОДНІ — використовую найближчу дату як today: 1773698400 (17.03.2026)
+2026-03-16 07:55:25 [gener_im_full] Знайдено дату для СЬОГОДНІ: 1773612000 (16.03.2026)
+2026-03-16 07:55:25 [gener_im_full] Знайдено дату для ЗАВТРА: 1773698400 (17.03.2026)
+2026-03-16 07:55:25 [gener_im_full] Знайдено дату для СЬОГОДНІ: 1773612000 (16.03.2026)
+2026-03-16 07:55:25 [gener_im_full] Знайдено іншу дату: 1773439200 (14.03.2026), різниця днів: -2
+2026-03-16 07:55:25 [gener_im_full] Знайдено дату для ЗАВТРА: 1773698400 (17.03.2026)
+2026-03-16 07:55:25 [gener_im_full] Немає даних для СЬОГОДНІ — використовую найближчу дату як today: 1773698400 (17.03.2026)
