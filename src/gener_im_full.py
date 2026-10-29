@@ -368,7 +368,7 @@ def render_single_date(
         )
 
     # --- Ліва колонка ---
-    left_label = "Черга"
+    left_label = "Група"
     draw.rectangle(
         [table_x0, hour_y0, table_x0 + LEFT_COL_W, hour_y1],
         fill=HEADER_BG,

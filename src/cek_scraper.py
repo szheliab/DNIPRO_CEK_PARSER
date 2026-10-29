@@ -1387,10 +1387,8 @@ class PowercutScraper:
         # Clean up old data (dates before today in Kyiv timezone)
         data = self.cleanup_old_data(data)
 
-        # Update lastUpdated timestamp
-        data["lastUpdated"] = (
-            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        )
+        checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        data["lastUpdated"] = checked_at
 
         # Get all unique queue numbers from all dates
         all_queues = set()
@@ -1450,9 +1448,7 @@ class PowercutScraper:
         data["fact"]["update"] = datetime.now(kyiv_tz).strftime("%d.%m.%Y %H:%M")
 
         # Update lastUpdateStatus
-        data["lastUpdateStatus"]["at"] = (
-            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        )
+        data["lastUpdateStatus"]["at"] = checked_at
 
         return data
 
@@ -1672,7 +1668,6 @@ def main():
 
         if not schedules:
             logger.warning("No schedules found")
-            sys.exit(0)
 
         # Count total queues found
         all_queues = set()
