@@ -7,19 +7,19 @@ on:
 
 jobs:
   scrape-and-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     outputs:
       fact_data_changed: ${{ steps.fact_diff.outputs.changed }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -45,6 +45,13 @@ jobs:
         run: |
           set -e
 
+          # Скрейпер не знайшов жодного розкладу → нічого генерувати
+          if [ "$(jq '(.fact.data // {}) | length' out/cek.json)" -eq 0 ]; then
+            echo "fact.data порожнє, пропускаю генерацію зображень"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # First run or missing file → treat as changed
           if ! git show HEAD:out/cek.json >/dev/null 2>&1; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -61,7 +68,7 @@ jobs:
           fi
 
       - name: Upload JSON artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: json-data
           path: out/cek.json
@@ -69,15 +76,15 @@ jobs:
 
   generate-images:
     needs: scrape-and-check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: needs.scrape-and-check.outputs.fact_data_changed == 'true'
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -93,7 +100,7 @@ jobs:
           sudo apt-get install -y fonts-dejavu-core fonts-dejavu-extra
 
       - name: Download JSON artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: json-data
           path: out/
@@ -108,7 +115,7 @@ jobs:
         run: python src/gener_im_1_G.py
 
       - name: Upload images artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: schedule-images
           path: out/images/
@@ -116,24 +123,24 @@ jobs:
 
   commit-and-push:
     needs: [scrape-and-check, generate-images]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: always() && needs.scrape-and-check.result == 'success' && (needs.generate-images.result == 'success' || needs.generate-images.result == 'skipped')
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download JSON artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: json-data
           path: out/
 
       - name: Download images artifact
         if: needs.scrape-and-check.outputs.fact_data_changed == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: schedule-images
           path: out/images/
