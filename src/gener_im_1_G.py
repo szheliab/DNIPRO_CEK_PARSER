@@ -239,7 +239,7 @@ class ImageRenderer:
         self, draw: ImageDraw.Draw, font: ImageFont.FreeTypeFont
     ) -> None:
         """Малювати правий заголовок з заокругленим фоном"""
-        right_title = f"Черга {self.group_name.replace('GPV', '')}"
+        right_title = f"Група {self.group_name.replace('GPV', '')}"
         bbox_right = draw.textbbox((0, 0), right_title, font=font)
         w_right = bbox_right[2] - bbox_right[0]
         h_right = bbox_right[3] - bbox_right[1]

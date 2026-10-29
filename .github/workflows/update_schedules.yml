@@ -61,7 +61,6 @@ jobs:
           fi
 
       - name: Upload JSON artifact
-        if: steps.fact_diff.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: json-data
@@ -116,8 +115,9 @@ jobs:
           retention-days: 1
 
   commit-and-push:
-    needs: generate-images
+    needs: [scrape-and-check, generate-images]
     runs-on: ubuntu-latest
+    if: always() && needs.scrape-and-check.result == 'success' && (needs.generate-images.result == 'success' || needs.generate-images.result == 'skipped')
 
     steps:
       - name: Checkout repository
@@ -132,6 +132,7 @@ jobs:
           path: out/
 
       - name: Download images artifact
+        if: needs.scrape-and-check.outputs.fact_data_changed == 'true'
         uses: actions/download-artifact@v4
         with:
           name: schedule-images
