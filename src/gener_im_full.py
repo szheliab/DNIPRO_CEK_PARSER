@@ -159,6 +159,16 @@ def get_dates_to_generate(fact_data: dict) -> list:
         date_str = datetime.fromtimestamp(timestamp, kyiv_tz).strftime("%d.%m.%Y")
         result.append((timestamp, day_key, "gpv-all-today.png", date_str))
         log(f"Використовую останню дату як today: {day_key} ({date_str})")
+    else:
+        # Якщо немає дати для СЬОГОДНІ, але є ЗАВТРА — перепризначаємо її як today
+        has_today = any(fn == "gpv-all-today.png" for _, _, fn, _ in result)
+        if not has_today:
+            first_ts, first_key, _, first_date_str = result[0]
+            result[0] = (first_ts, first_key, "gpv-all-today.png", first_date_str)
+            log(
+                f"Немає даних для СЬОГОДНІ — використовую найближчу дату як today: "
+                f"{first_key} ({first_date_str})"
+            )
 
     return result
 
