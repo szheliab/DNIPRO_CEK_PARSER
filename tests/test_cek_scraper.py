@@ -70,6 +70,47 @@ class ExtractModificationsTest(unittest.TestCase):
             3.1: ["12:00-15:00"],
         })
 
+    def test_additional_ranges_accept_conjunctions_in_both_lists(self) -> None:
+        message = (
+            "з 00:00 до 5:00 додатково застосовуються відлючення черги "
+            "5.1 та 5.2 і 6.1 та черги 1.1 та 1.2 і 2.1 - з 01:30 до 05:00 ‼️"
+        )
+        self.assertEqual(
+            set(self.scraper.extract_modifications(message)),
+            {
+                (5.1, "additional", "00:00-05:00"),
+                (5.2, "additional", "00:00-05:00"),
+                (6.1, "additional", "00:00-05:00"),
+                (1.1, "additional", "01:30-05:00"),
+                (1.2, "additional", "01:30-05:00"),
+                (2.1, "additional", "01:30-05:00"),
+            },
+        )
+
+    def test_cancellation_does_not_create_additional_outage(self) -> None:
+        cancellation = "скасовано відключення черги 1.1 - з 12:00 до 14:00"
+        self.assertEqual(
+            self.scraper.extract_modifications(cancellation),
+            [(1.1, "cancel", "00:00")],
+        )
+        addition = (
+            "з 00:00 до 5:00 додатково застосовуються відлючення черги "
+            "5.1 та черги 5.2 - з 01:30 до 05:00"
+        )
+        for message in (
+            f"{cancellation}; {addition}",
+            f"{addition}; {cancellation}",
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(
+                    set(self.scraper.extract_modifications(message)),
+                    {
+                        (1.1, "cancel", "00:00"),
+                        (5.1, "additional", "00:00-05:00"),
+                        (5.2, "additional", "01:30-05:00"),
+                    },
+                )
+
     def test_early_start_without_upcoming_slot_leaves_schedule_unchanged(self) -> None:
         slots = ["07:00-09:00", "09:30-10:30"]
         with self.assertLogs(self.scraper.logger, level="WARNING"):

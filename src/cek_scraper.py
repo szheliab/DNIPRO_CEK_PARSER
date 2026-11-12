@@ -1320,10 +1320,19 @@ class PowercutScraper:
         # Format with multiple queue lists and hours without a leading zero.
         clock = r"\d{1,2}:\d{2}"
         queue_word = r"(?:під)?(?:черг|груп)[а-яіїєґ]*"
+        queue_list = (
+            r"\d\.\d\b(?:\s*(?:,\s*(?:(?:та|і)\s+)?|"
+            r"(?:та|і)\s+)\d\.\d\b)*"
+        )
         additional_pattern_3 = re.compile(
             rf"з\s+({clock})\s+(?:по|до)\s+({clock})\s+додатково\s+"
             rf"застосовуються\s+(?:від\w*ення\s+)?{queue_word}\s+"
-            rf"([\d.,\s]+?)(?=\s+та\s+{queue_word}\b|\s*[-–—]\s*з\s+{clock}\b|[‼️!]|$)",
+            rf"({queue_list})",
+            re.IGNORECASE,
+        )
+        continuation_pattern = re.compile(
+            rf"\s*,?\s*(?:(?:та|і)\s+)?{queue_word}\s+({queue_list})"
+            rf"\s*[-–—]\s*з\s+({clock})\s+(?:по|до)\s+({clock})",
             re.IGNORECASE,
         )
         for match in additional_pattern_3.finditer(message):
@@ -1337,23 +1346,19 @@ class PowercutScraper:
                 self.logger.info(
                     f"Found additional outage for queue {queue} from {time_range}"
                 )
-
-        additional_pattern_4 = re.compile(
-            rf"(?:та\s+)?{queue_word}\s+([\d.,\s]+?)\s*[-–—]\s*з\s+"
-            rf"({clock})\s+(?:по|до)\s+({clock})",
-            re.IGNORECASE,
-        )
-        for match in additional_pattern_4.finditer(message):
-            start_time = match.group(2).zfill(5)
-            end_time = match.group(3).zfill(5)
-            if end_time == "00:00" and start_time != "00:00":
-                end_time = "24:00"
-            time_range = f"{start_time}-{end_time}"
-            for queue in self.extract_queue_numbers(match.group(1)):
-                modifications.append((queue, "additional", time_range))
-                self.logger.info(
-                    f"Found additional outage for queue {queue} from {time_range}"
-                )
+            position = match.end()
+            while continuation := continuation_pattern.match(message, position):
+                start_time = continuation.group(2).zfill(5)
+                end_time = continuation.group(3).zfill(5)
+                if end_time == "00:00" and start_time != "00:00":
+                    end_time = "24:00"
+                time_range = f"{start_time}-{end_time}"
+                for queue in self.extract_queue_numbers(continuation.group(1)):
+                    modifications.append((queue, "additional", time_range))
+                    self.logger.info(
+                        f"Found additional outage for queue {queue} from {time_range}"
+                    )
+                position = continuation.end()
 
         # Pattern for cancellation: "скасовано відключення черги 3.1" or "скасовано відключення групи 3.1"
         cancel_pattern = re.compile(
