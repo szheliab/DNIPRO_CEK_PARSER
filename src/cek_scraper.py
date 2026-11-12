@@ -880,6 +880,11 @@ class PowercutScraper:
                                 self.logger.info(
                                     f"Cancelled schedule for queue {queue_num} on {date}"
                                 )
+                        elif mod_type == "early_start":
+                            self.logger.warning(
+                                f"Cannot apply early start for queue {queue_num} "
+                                f"on {date}: no existing schedule"
+                            )
 
     def modify_time_slots(
         self,
@@ -902,6 +907,11 @@ class PowercutScraper:
             Modified list of time slots
         """
         if not time_slots:
+            if mod_type == "early_start":
+                self.logger.warning(
+                    f"Cannot apply early start for queue {queue_num} on {date}: "
+                    "no existing time slots"
+                )
             return time_slots
 
         current_time = datetime.now()
@@ -965,40 +975,32 @@ class PowercutScraper:
 
         elif mod_type == "early_start":
             # Find which slot to start earlier
-            # Strategy: Find the slot that starts closest to or after the early start time
-            # For example, if early start is 07:00, and we have slots 00:00-04:00, 08:00-11:00, 18:00-20:00
-            # we should modify 08:00-11:00 to become 07:00-11:00
             slot_to_modify = None
+            nearest_start = None
             early_start_time = datetime.strptime(f"{date} {mod_time}", "%d.%m.%Y %H:%M")
 
             for idx, slot in enumerate(time_slots):
-                start_time_str, end_time_str = slot.split("-")
+                start_time_str, _ = slot.split("-")
                 try:
                     slot_start = datetime.strptime(
                         f"{date} {start_time_str}", "%d.%m.%Y %H:%M"
                     )
 
-                    # Find the first slot that starts at or after the early start time
-                    if slot_start >= early_start_time:
+                    if slot_start >= early_start_time and (
+                        nearest_start is None or slot_start < nearest_start
+                    ):
                         slot_to_modify = idx
-                        break
+                        nearest_start = slot_start
                 except (ValueError, TypeError) as e:
-                    self.logger.debug(f"Failed to parse slot start time: {e}")
+                    self.logger.warning(f"Failed to parse slot start time: {e}")
                     continue
 
-            # If no specific slot found (all slots start before early start time), modify the last one
-            # This is a fallback for edge cases - log a warning as this may indicate incorrect data
             if slot_to_modify is None:
                 self.logger.warning(
-                    f"Early start fallback: All time slots start before {mod_time}{queue_str}. "
-                    f"Modifying last slot as fallback. This may indicate incorrect data or timing."
+                    f"Cannot apply early start at {mod_time}{queue_str}: "
+                    "no slot starts at or after that time"
                 )
-                if len(time_slots) == 0:
-                    self.logger.error(
-                        f"Cannot apply early start{queue_str}: no time slots available"
-                    )
-                    return time_slots  # Return unmodified
-                slot_to_modify = len(time_slots) - 1
+                return time_slots
 
             # Modify the identified slot
             modified = time_slots.copy()
@@ -1088,7 +1090,7 @@ class PowercutScraper:
                         schedules_by_queue[queue_number] = []
                     schedules_by_queue[queue_number].append(time_range)
 
-        # Формат: "з 22:00 до 24:00 застосовуються відключення черг: 1.1, 1.2" (з можливими одруківками)
+        # Format: "з 22:00 до 24:00 застосовуються відключення черг: 1.1, 1.2" (including typos)
         applied_pattern = re.compile(
             r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2}),?\s+застосовуються\s+(?:від[а-яіїє]*ення\s+)?(?:під)?(?:черг|груп)[аиуіоє]?\s*:?\s*([\d.,\sта]+)",
             re.IGNORECASE,
@@ -1102,7 +1104,7 @@ class PowercutScraper:
                     f"{start_time}-{end_time}"
                 )
 
-        # Формат: "з 12:30 до 16:00 відключаються черги: 1.1, 1.2 та 2.1"
+        # Format: "з 12:30 до 16:00 відключаються черги: 1.1, 1.2 та 2.1"
         outage_pattern = re.compile(
             r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2})\s+"
             r"відключа\w*ся\s+(?:під)?(?:черг|груп)[а-яіїєґ]*\s*:?\s*"
@@ -1272,6 +1274,18 @@ class PowercutScraper:
                         f"Found early start for queue {queue} at {start_time}"
                     )
 
+        early_start_pattern = re.compile(
+            r"з\s+(\d{2}:\d{2})\s+додатково\s+застосовуються\s+"
+            r"(?:відключення\s+)?(?:під)?(?:черг|груп)[аиуіоє]?\s*:?\s*"
+            r"([\d.,\sіта]+)",
+            re.IGNORECASE,
+        )
+        for match in early_start_pattern.finditer(message):
+            start_time, queues_str = match.groups()
+            for queue in self.extract_queue_numbers(queues_str):
+                modifications.append((queue, "early_start", start_time))
+                self.logger.info(f"Found early start for queue {queue} at {start_time}")
+
         # Pattern 2: Queue first - "відключення підчерг 2.2 додатково застосовуватимується з 00:00 до 05:30" or "відключення підгруп 2.2 додатково застосовуватимується з 00:00 до 05:30"
         # Also handles: "підчерги 3.2 з 02:00 до 05:00" or "підгрупи 3.2 з 02:00 до 05:00" (continuation after comma)
         # More flexible pattern to handle various word forms and whitespace
@@ -1303,7 +1317,7 @@ class PowercutScraper:
                         f"Found early start for queue {queue} at {start_time}"
                     )
 
-        # Формат із кількома переліками черг та годиною без початкового нуля.
+        # Format with multiple queue lists and hours without a leading zero.
         clock = r"\d{1,2}:\d{2}"
         queue_word = r"(?:під)?(?:черг|груп)[а-яіїєґ]*"
         additional_pattern_3 = re.compile(

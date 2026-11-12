@@ -39,6 +39,53 @@ class ExtractModificationsTest(unittest.TestCase):
             },
         )
 
+    def test_applies_early_start_to_nearest_upcoming_slot(self) -> None:
+        message = (
+            'Шановні споживачі! Повідомляємо про зміни в ГПВ 12 ЛИСТОПАДА, '
+            'за розпорядженням диспетчерського центру НЕК "Укренерго" '
+            "з 10:40 додатково застосовуються черги 2.1 та 2.2 ‼️"
+        )
+        modifications = self.scraper.extract_modifications(message)
+        self.assertEqual(
+            modifications,
+            [(2.1, "early_start", "10:40"), (2.2, "early_start", "10:40")],
+        )
+        schedules = {
+            "12.11.2026": {
+                2.1: ["18:00-20:00", "12:00-15:00", "07:00-09:00"],
+                2.2: ["11:30-13:00"],
+                3.1: ["12:00-15:00"],
+            }
+        }
+        self.scraper.apply_modifications(
+            schedules,
+            {"12.11.2026": {
+                queue: [f"MOD:{kind}:{time}"]
+                for queue, kind, time in modifications
+            }},
+        )
+        self.assertEqual(schedules["12.11.2026"], {
+            2.1: ["07:00-09:00", "10:40-15:00", "18:00-20:00"],
+            2.2: ["10:40-13:00"],
+            3.1: ["12:00-15:00"],
+        })
+
+    def test_early_start_without_upcoming_slot_leaves_schedule_unchanged(self) -> None:
+        slots = ["07:00-09:00", "09:30-10:30"]
+        with self.assertLogs(self.scraper.logger, level="WARNING"):
+            result = self.scraper.modify_time_slots(
+                slots, "early_start", "10:40", "12.11.2026", 2.1
+            )
+        self.assertEqual(result, slots)
+
+    def test_early_start_without_existing_queue_logs_warning(self) -> None:
+        schedules = {"12.11.2026": {}}
+        with self.assertLogs(self.scraper.logger, level="WARNING"):
+            self.scraper.apply_modifications(
+                schedules, {"12.11.2026": {2.1: ["MOD:early_start:10:40"]}}
+            )
+        self.assertEqual(schedules, {"12.11.2026": {}})
+
 
 class ExtractAllSchedulesTest(unittest.TestCase):
     def setUp(self) -> None:
