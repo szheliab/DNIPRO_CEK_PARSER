@@ -1066,7 +1066,7 @@ class PowercutScraper:
         # (from 07:00 to 10:00 is disconnected queues 1, 2, 3.1)
         # or "з 07:00 по 10:00 відключається 1, 2, 3.1 черги" or "з 07:00 по 10:00 відключається 1, 2, 3.1 групи"
         old_pattern = re.compile(
-            r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?\sвідключа[ює]ться*([0-9\sта,.;:!?]*(?:черг|груп)[аиі])+",
+            r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2});?\sвідключа[ює]ться*([0-9\sтаі,.;:!?]*(?:черг|груп)[аиі])+",
             re.IGNORECASE,
         )
         matches = old_pattern.findall(message)
@@ -1092,7 +1092,7 @@ class PowercutScraper:
 
         # Format: "з 22:00 до 24:00 застосовуються відключення черг: 1.1, 1.2" (including typos)
         applied_pattern = re.compile(
-            r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2}),?\s+застосовуються\s+(?:від[а-яіїє]*ення\s+)?(?:під)?(?:черг|груп)[аиуіоє]?\s*:?\s*([\d.,\sта]+)",
+            r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2}),?\s+застосовуються\s+(?:від[а-яіїє]*ення\s+)?(?:під)?(?:черг|груп)[аиуіоє]?\s*:?\s*([\d.,\sтаі]+)",
             re.IGNORECASE,
         )
         for match in applied_pattern.finditer(message):
@@ -1108,7 +1108,7 @@ class PowercutScraper:
         outage_pattern = re.compile(
             r"з\s(\d{2}:\d{2})\s(?:по|до)\s(\d{2}:\d{2})\s+"
             r"відключа\w*ся\s+(?:під)?(?:черг|груп)[а-яіїєґ]*\s*:?\s*"
-            r"([\d.,\sта]+)",
+            r"([\d.,\sтаі]+)",
             re.IGNORECASE,
         )
         for match in outage_pattern.finditer(message):
@@ -1174,11 +1174,13 @@ class PowercutScraper:
                 continue
 
         # Видалити дублікати з кожної черги / Remove duplicates from each queue
-        for queue_num in schedules_by_queue:
+        for queue_num in list(schedules_by_queue):
             # Use dict.fromkeys() to preserve order while removing duplicates
             schedules_by_queue[queue_num] = list(
                 dict.fromkeys(schedules_by_queue[queue_num])
             )
+            if not schedules_by_queue[queue_num]:
+                del schedules_by_queue[queue_num]
 
         return schedules_by_queue
 

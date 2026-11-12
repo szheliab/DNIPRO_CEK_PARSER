@@ -153,6 +153,26 @@ class ExtractAllSchedulesTest(unittest.TestCase):
             },
         )
 
+    def test_time_first_announcements_accept_i_conjunction(self) -> None:
+        for verb in ("застосовуються відключення", "відключаються"):
+            with self.subTest(verb=verb):
+                message = f"з 12:30 до 16:00 {verb} черги: 1.1 і 1.2"
+                self.assertEqual(
+                    self.scraper.extract_all_schedules(message),
+                    {1.1: ["12:30-16:00"], 1.2: ["12:30-16:00"]},
+                )
+
+    def test_early_start_message_has_no_empty_schedule_entries(self) -> None:
+        message = (
+            "Повідомляємо про зміни в ГПВ на 12 ЛИСТОПАДА, "
+            "з 10:40 додатково застосовуються черга 2.1"
+        )
+        self.assertEqual(self.scraper.extract_all_schedules(message), {})
+        self.assertEqual(
+            self.scraper.extract_modifications(message),
+            [(2.1, "early_start", "10:40")],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
