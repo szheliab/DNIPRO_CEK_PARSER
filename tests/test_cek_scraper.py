@@ -173,6 +173,21 @@ class ExtractAllSchedulesTest(unittest.TestCase):
             [(2.1, "early_start", "10:40")],
         )
 
+    def test_extracts_bare_queue_number_lines_format(self) -> None:
+        message = (
+            "📢 Шановні споживачі! 17 ЛИСТОПАДА з 00:00 до 24:00 діятимуть наступні черги:\n\n"
+            "1.1\n00:00-01:00\n04:30-11:30\n15:00-22:00\n"
+            "3.1\n00:00-04:30\n08:00-15:00\n18:30-24:00\n"
+            "Попереджаємо, що протягом доби графік може змінюватися‼️"
+        )
+        self.assertEqual(
+            self.scraper.extract_all_schedules(message),
+            {
+                1.1: ["00:00-01:00", "04:30-11:30", "15:00-22:00"],
+                3.1: ["00:00-04:30", "08:00-15:00", "18:30-24:00"],
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
