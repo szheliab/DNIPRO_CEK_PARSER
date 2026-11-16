@@ -395,6 +395,9 @@ class PowercutScraper:
             if not message_text_div:
                 continue
 
+            # <br> -> перенос рядка, інакше черга і час зливаються
+            for br in message_text_div.find_all("br"):
+                br.replace_with("\n")
             message_text = message_text_div.get_text()
 
             # Extract date from message - if not found, use message timestamp date
@@ -1172,6 +1175,21 @@ class PowercutScraper:
                     schedules_by_queue[queue_number].append(f"{start_time}-{end_time}")
             except ValueError:
                 continue
+
+        # Format without keywords: "1.1\n00:00-01:00\n04:30-11:30" (queue number alone on a line)
+        bare_blocks = re.findall(
+            r"^[ \t]*(\d\.\d)[ \t]*\r?\n((?:[ \t]*\d{2}:\d{2}-\d{2}:\d{2}[ \t]*(?:\r?\n|$))+)",
+            message,
+            re.MULTILINE,
+        )
+        for queue_info, block in bare_blocks:
+            queue_number = float(queue_info)
+            for start_time, end_time in re.findall(r"(\d{2}:\d{2})-(\d{2}:\d{2})", block):
+                if end_time == "00:00" and start_time != "00:00":
+                    end_time = "24:00"
+                schedules_by_queue.setdefault(queue_number, []).append(
+                    f"{start_time}-{end_time}"
+                )
 
         # Видалити дублікати з кожної черги / Remove duplicates from each queue
         for queue_num in list(schedules_by_queue):
