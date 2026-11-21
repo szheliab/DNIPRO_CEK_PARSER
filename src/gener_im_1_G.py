@@ -143,7 +143,7 @@ class DataProcessor:
     def get_groups_from_data(data: dict) -> list:
         """Отримати список груп з даних"""
         fact = data.get("fact", {})
-        day_keys = list(fact.get("data", {}).keys())
+        day_keys = sorted(fact.get("data", {}).keys(), key=lambda x: int(x))
 
         if not day_keys:
             raise ValueError("JSON не містить даних фактів")
@@ -156,9 +156,9 @@ class DataProcessor:
 
     @staticmethod
     def get_dates_for_display(data: dict, max_dates: int = 2) -> list:
-        """Отримати дати для відображення (обмежено max_dates)"""
+        """Отримати дати для відображення (обмежено max_dates), відсортовані хронологічно"""
         fact = data.get("fact", {})
-        day_keys = list(fact.get("data", {}).keys())[:max_dates]
+        day_keys = sorted(fact.get("data", {}).keys(), key=lambda x: int(x))[:max_dates]
 
         if not day_keys:
             raise ValueError("У JSON немає дат для відображення")
