@@ -18,6 +18,11 @@ from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional
 import argparse
 
+try:
+    from custom_schedule import build_custom_hours, parse_custom_schedule
+except ImportError:  # імпорт як пакета (src.cek_scraper)
+    from src.custom_schedule import build_custom_hours, parse_custom_schedule
+
 
 # Setup logging
 def setup_logging(log_level: str = "INFO") -> logging.Logger:
@@ -218,6 +223,8 @@ class PowercutScraper:
         self.end_date = end_date
         self.logger = logger or logging.getLogger("cek_scraper")
         self.session = session or create_session_with_retries()
+        # date -> (timestamp повідомлення, {черга: слоти}) для нестандартних графіків
+        self.custom_schedules: Dict[str, tuple] = {}
 
         self.months_uk = {
             "січня": "01",
@@ -441,6 +448,16 @@ class PowercutScraper:
                     self.logger.debug(
                         f'Processing message posted at: {message_timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if message_timestamp else "Unknown time"} for date {date}'
                     )
+
+                    # Нестандартний графік (1, 2, 3 черга) - пізніше повідомлення замінює раніше
+                    custom = parse_custom_schedule(message_text)
+                    if custom:
+                        msg_time = (
+                            message_timestamp.timestamp() if message_timestamp else 0
+                        )
+                        prev = self.custom_schedules.get(date)
+                        if not prev or msg_time >= prev[0]:
+                            self.custom_schedules[date] = (msg_time, custom)
 
                     # Перевірка, чи є це частковим оновленням графіка
                     # Check if this is a partial schedule update (e.g., changes for 19:00-24:00)
@@ -1543,6 +1560,8 @@ class PowercutScraper:
                         f"Added empty schedule (all 'yes') for missing queue {queue_key} on {date_str}"
                     )
 
+        self.apply_custom_schedules(data)
+
         # Set today's timestamp (using Kyiv timezone)
         kyiv_tz = ZoneInfo("Europe/Kyiv")
         today_midnight = datetime.now(kyiv_tz).replace(
@@ -1557,6 +1576,30 @@ class PowercutScraper:
         data["lastUpdateStatus"]["at"] = checked_at
 
         return data
+
+    def apply_custom_schedules(self, data: dict) -> None:
+        """Записати нестандартні графіки (1, 2, 3 черга) у data["custom"]["data"]"""
+        kyiv_tz = ZoneInfo("Europe/Kyiv")
+        today_ts = int(
+            datetime.now(kyiv_tz)
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .timestamp()
+        )
+        custom = data.setdefault("custom", {"data": {}})
+        custom_data = custom.setdefault("data", {})
+
+        for ts in [k for k in custom_data if int(k) < today_ts]:
+            del custom_data[ts]
+
+        for date_str, (_, schedules) in getattr(self, "custom_schedules", {}).items():
+            ts = int(
+                datetime.strptime(date_str, "%d.%m.%Y")
+                .replace(tzinfo=kyiv_tz)
+                .timestamp()
+            )
+            custom_data[str(ts)] = build_custom_hours(
+                schedules, self.create_hours_from_schedules
+            )
 
     def create_json_structure(self) -> dict:
         """Create initial JSON structure following dnipro.json schema"""
