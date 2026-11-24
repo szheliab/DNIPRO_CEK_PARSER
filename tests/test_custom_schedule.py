@@ -50,20 +50,34 @@ class OtherCityTest(unittest.TestCase):
         self.assertEqual(parse_custom_schedule(message), {})
 
 
-class CustomImageTest(unittest.TestCase):
-    def test_generates_image_per_custom_queue(self) -> None:
+class CustomFactDataTest(unittest.TestCase):
+    def test_custom_queues_are_written_to_fact_data_and_rendered(self) -> None:
         import json
+        import logging
         import tempfile
         from pathlib import Path
 
         from src import gener_im_1_G as gen
+        from src.cek_scraper import PowercutScraper
 
-        hours = {str(h): "no" if h <= 2 else "yes" for h in range(1, 25)}
-        data = {
-            "fact": {"data": {}, "update": "24.11.2026 10:00"},
-            "custom": {"data": {"1795471200": {"1": hours, "2": hours}}},
-            "preset": {},
+        scraper = PowercutScraper.__new__(PowercutScraper)
+        scraper.logger = logging.getLogger(__name__)
+        scraper.custom_schedules = {
+            "24.11.2026": (0, {1: ["00:00-02:00"], 2: ["02:00-06:00"]})
         }
+        data = {"fact": {"data": {}}, "custom": {"data": {}}}
+        scraper.create_hours_from_schedules = (
+            lambda slots: PowercutScraper.create_hours_from_schedules(scraper, slots)
+        )
+        scraper.create_default_hours = lambda: {str(i): "yes" for i in range(1, 25)}
+        scraper.apply_custom_schedules(data)
+
+        self.assertNotIn("custom", data)
+        (day,) = data["fact"]["data"].values()
+        self.assertEqual(set(day), {"GPV1", "GPV2"})
+        self.assertEqual(day["GPV1"]["1"], "no")
+        self.assertEqual(day["GPV1"]["3"], "yes")
+
         with tempfile.TemporaryDirectory() as tmp:
             json_path = Path(tmp) / "cek.json"
             json_path.write_text(json.dumps(data), encoding="utf-8")

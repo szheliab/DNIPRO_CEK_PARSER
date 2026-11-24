@@ -1591,18 +1591,10 @@ class PowercutScraper:
         return data
 
     def apply_custom_schedules(self, data: dict) -> None:
-        """Write custom schedules (queues 1, 2, 3) into data["custom"]["data"]"""
+        """Write custom schedules (queues 1, 2, 3) into fact.data as GPV1, GPV2, ..."""
         kyiv_tz = ZoneInfo("Europe/Kyiv")
-        today_ts = int(
-            datetime.now(kyiv_tz)
-            .replace(hour=0, minute=0, second=0, microsecond=0)
-            .timestamp()
-        )
-        custom = data.setdefault("custom", {"data": {}})
-        custom_data = custom.setdefault("data", {})
-
-        for ts in [k for k in custom_data if int(k) < today_ts]:
-            del custom_data[ts]
+        # Drop the separate "custom" section used by earlier versions
+        data.pop("custom", None)
 
         for date_str, (_, schedules) in getattr(self, "custom_schedules", {}).items():
             ts = int(
@@ -1610,12 +1602,13 @@ class PowercutScraper:
                 .replace(tzinfo=kyiv_tz)
                 .timestamp()
             )
-            custom_data[str(ts)] = build_custom_hours(
+            day = data["fact"]["data"].setdefault(str(ts), {})
+            for queue, hours in build_custom_hours(
                 schedules, self.create_hours_from_schedules
-            )
-            for queue, slots in sorted(schedules.items()):
+            ).items():
+                day[f"GPV{queue}"] = hours
                 self.logger.debug(
-                    f"Custom schedule for {date_str}, Queue {queue}: {slots}"
+                    f"Custom schedule for {date_str}, Queue {queue}: {schedules[int(queue)]}"
                 )
 
     def create_json_structure(self) -> dict:
