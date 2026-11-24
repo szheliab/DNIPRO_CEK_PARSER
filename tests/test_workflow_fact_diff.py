@@ -77,6 +77,13 @@ class FactDiffStepTest(unittest.TestCase):
         self.commit_json(data)
         self.assertEqual(self.run_step(), "changed=false")
 
+    def test_custom_only_change_is_changed(self) -> None:
+        self.commit_json({"fact": {"data": {}, "today": 1}})
+        self.write_json(
+            {"fact": {"data": {}, "today": 1}, "custom": {"data": {"1": {"1": {}}}}}
+        )
+        self.assertEqual(self.run_step(), "changed=true")
+
     def test_first_run_with_data_is_changed(self) -> None:
         self.write_json({"fact": {"data": {"1": {}}, "today": 1}})
         self.assertEqual(self.run_step(), "changed=true")

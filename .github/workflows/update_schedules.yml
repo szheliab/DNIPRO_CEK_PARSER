@@ -46,8 +46,8 @@ jobs:
           set -e
 
           # Скрейпер не знайшов жодного розкладу → нічого генерувати
-          if [ "$(jq '(.fact.data // {}) | length' out/cek.json)" -eq 0 ]; then
-            echo "fact.data порожнє, пропускаю генерацію зображень"
+          if [ "$(jq '((.fact.data // {}) | length) + ((.custom.data // {}) | length)' out/cek.json)" -eq 0 ]; then
+            echo "fact.data і custom.data порожні, пропускаю генерацію зображень"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -58,8 +58,8 @@ jobs:
             exit 0
           fi
 
-          jq -cS '{data: .fact.data, today: .fact.today}' out/cek.json > /tmp/new_fact.json
-          git show HEAD:out/cek.json | jq -cS '{data: .fact.data, today: .fact.today}' > /tmp/old_fact.json
+          jq -cS '{data: .fact.data, custom: (.custom.data // {}), today: .fact.today}' out/cek.json > /tmp/new_fact.json
+          git show HEAD:out/cek.json | jq -cS '{data: .fact.data, custom: (.custom.data // {}), today: .fact.today}' > /tmp/old_fact.json
 
           if diff -q /tmp/old_fact.json /tmp/new_fact.json >/dev/null; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
