@@ -69,8 +69,8 @@ class CustomImageTest(unittest.TestCase):
             json_path.write_text(json.dumps(data), encoding="utf-8")
             gen.OUT_DIR = Path(tmp)
             gen.generate_from_json(str(json_path))
-            self.assertTrue((Path(tmp) / "gpv-custom-1.png").exists())
-            self.assertTrue((Path(tmp) / "gpv-custom-2.png").exists())
+            self.assertTrue((Path(tmp) / "gpv-1-emergency.png").exists())
+            self.assertTrue((Path(tmp) / "gpv-2-emergency.png").exists())
 
 
 if __name__ == "__main__":

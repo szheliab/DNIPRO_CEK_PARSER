@@ -708,7 +708,7 @@ def generate_from_json(json_path: str):
                 Path(json_path),
                 queue,
                 title=f"Черга {queue}",
-                out_name=f"gpv-custom-{queue}.png",
+                out_name=f"gpv-{queue}-emergency.png",
             ).render()
 
 
