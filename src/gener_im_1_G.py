@@ -17,6 +17,7 @@ import locale
 import os
 import argparse
 import sys
+from typing import Optional
 
 # Спроба встановити локаль для українських назв місяців
 try:
@@ -169,8 +170,17 @@ class DataProcessor:
 class ImageRenderer:
     """Клас для рендерингу зображення"""
 
-    def __init__(self, data: dict, json_path: Path, group_name: str):
+    def __init__(
+        self,
+        data: dict,
+        json_path: Path,
+        group_name: str,
+        title: Optional[str] = None,
+        out_name: Optional[str] = None,
+    ):
         self.data = data
+        self.title = title
+        self.out_name = out_name
         self.json_path = json_path
         self.group_name = group_name
         self.font_manager = FontManager()
@@ -239,7 +249,7 @@ class ImageRenderer:
         self, draw: ImageDraw.Draw, font: ImageFont.FreeTypeFont
     ) -> None:
         """Малювати правий заголовок з заокругленим фоном"""
-        right_title = f"Група {self.group_name.replace('GPV', '')}"
+        right_title = self.title or f"Група {self.group_name.replace('GPV', '')}"
         bbox_right = draw.textbbox((0, 0), right_title, font=font)
         w_right = bbox_right[2] - bbox_right[0]
         h_right = bbox_right[3] - bbox_right[1]
@@ -659,7 +669,7 @@ class ImageRenderer:
     def _save_image(self, img: Image.Image) -> None:
         """Зберегти зображення"""
         safe_group_name = self.group_name.replace("GPV", "").replace(".", "-")
-        out_name = OUT_DIR / f"gpv-{safe_group_name}-emergency.png"
+        out_name = OUT_DIR / (self.out_name or f"gpv-{safe_group_name}-emergency.png")
 
         img_resized = img.resize(
             (img.width * Config.OUTPUT_SCALE, img.height * Config.OUTPUT_SCALE),
@@ -673,12 +683,33 @@ def generate_from_json(json_path: str):
     """Генерація зображень для всіх груп з JSON файлу"""
     processor = DataProcessor()
     data = processor.load_json_data(json_path)
-    groups = processor.get_groups_from_data(data)
+    groups = (
+        processor.get_groups_from_data(data)
+        if data.get("fact", {}).get("data")
+        else []
+    )
 
     for group in groups:
         log(f"▶ Генерую для {group}…")
         renderer = ImageRenderer(data, Path(json_path), group)
         renderer.render()
+
+    # Custom whole-number queues (1, 2, 3) are rendered from data["custom"]
+    custom_data = data.get("custom", {}).get("data", {})
+    if custom_data:
+        custom_view = {**data, "fact": {**data.get("fact", {}), "data": custom_data}}
+        queues = sorted(
+            {q for day in custom_data.values() for q in day}, key=int
+        )
+        for queue in queues:
+            log(f"▶ Генерую для кастомної черги {queue}…")
+            ImageRenderer(
+                custom_view,
+                Path(json_path),
+                queue,
+                title=f"Черга {queue}",
+                out_name=f"gpv-custom-{queue}.png",
+            ).render()
 
 
 # --- Завантаження останнього JSON ---

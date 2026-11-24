@@ -37,5 +37,28 @@ class CustomScheduleTest(unittest.TestCase):
         self.assertEqual(parse_custom_schedule(message), {})
 
 
+class CustomImageTest(unittest.TestCase):
+    def test_generates_image_per_custom_queue(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from src import gener_im_1_G as gen
+
+        hours = {str(h): "no" if h <= 2 else "yes" for h in range(1, 25)}
+        data = {
+            "fact": {"data": {}, "update": "24.11.2026 10:00"},
+            "custom": {"data": {"1795471200": {"1": hours, "2": hours}}},
+            "preset": {},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            json_path = Path(tmp) / "cek.json"
+            json_path.write_text(json.dumps(data), encoding="utf-8")
+            gen.OUT_DIR = Path(tmp)
+            gen.generate_from_json(str(json_path))
+            self.assertTrue((Path(tmp) / "gpv-custom-1.png").exists())
+            self.assertTrue((Path(tmp) / "gpv-custom-2.png").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

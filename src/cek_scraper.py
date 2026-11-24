@@ -20,7 +20,7 @@ import argparse
 
 try:
     from custom_schedule import build_custom_hours, parse_custom_schedule
-except ImportError:  # імпорт як пакета (src.cek_scraper)
+except ImportError:  # imported as a package (src.cek_scraper)
     from src.custom_schedule import build_custom_hours, parse_custom_schedule
 
 
@@ -223,7 +223,7 @@ class PowercutScraper:
         self.end_date = end_date
         self.logger = logger or logging.getLogger("cek_scraper")
         self.session = session or create_session_with_retries()
-        # date -> (timestamp повідомлення, {черга: слоти}) для нестандартних графіків
+        # date -> (message timestamp, {queue: slots}) for custom schedules
         self.custom_schedules: Dict[str, tuple] = {}
 
         self.months_uk = {
@@ -449,7 +449,7 @@ class PowercutScraper:
                         f'Processing message posted at: {message_timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if message_timestamp else "Unknown time"} for date {date}'
                     )
 
-                    # Нестандартний графік (1, 2, 3 черга) - пізніше повідомлення замінює раніше
+                    # Custom schedule (queues 1, 2, 3) - a later message replaces an earlier one
                     custom = parse_custom_schedule(message_text)
                     if custom:
                         msg_time = (
@@ -1578,7 +1578,7 @@ class PowercutScraper:
         return data
 
     def apply_custom_schedules(self, data: dict) -> None:
-        """Записати нестандартні графіки (1, 2, 3 черга) у data["custom"]["data"]"""
+        """Write custom schedules (queues 1, 2, 3) into data["custom"]["data"]"""
         kyiv_tz = ZoneInfo("Europe/Kyiv")
         today_ts = int(
             datetime.now(kyiv_tz)

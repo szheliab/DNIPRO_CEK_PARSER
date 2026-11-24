@@ -1,6 +1,6 @@
-"""Парсинг нестандартних графіків із цілими чергами (1, 2, 3).
+"""Parsing of custom schedules that use whole-number queues (1, 2, 3).
 
-Приклад повідомлення:
+Example message:
     📌 1 черга:
     ✔️ 00:00 - 02:00;
     ✔️ 10:00 - 14:00;
@@ -9,16 +9,16 @@
 import re
 from typing import Callable, Dict, List
 
-# "📌 1 черга:" - лише цілий номер (без крапки), щоб не плутати зі стандартними чергами 1.1, 2.2
+# "📌 1 черга:" - whole number only (no dot), so standard queues like 1.1, 2.2 are not matched
 QUEUE_HEADER = re.compile(r"(?<![\d.])(\d{1,2})\s*черга\s*:", re.IGNORECASE)
 TIME_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})")
 
 
 def parse_custom_schedule(message: str) -> Dict[int, List[str]]:
-    """Витягнути графік за цілими чергами.
+    """Extract the schedule for whole-number queues.
 
     Returns:
-        {1: ["00:00-02:00", "10:00-14:00"], 2: [...]}; порожній dict, якщо формат не збігається
+        {1: ["00:00-02:00", "10:00-14:00"], 2: [...]}; empty dict if the format does not match
     """
     headers = list(QUEUE_HEADER.finditer(message))
     schedules: Dict[int, List[str]] = {}
@@ -39,5 +39,5 @@ def build_custom_hours(
     schedules: Dict[int, List[str]],
     hours_builder: Callable[[List[str]], Dict[str, str]],
 ) -> Dict[str, Dict[str, str]]:
-    """Перетворити слоти на погодинні статуси: {"1": {"1": "no", ...}, ...}"""
+    """Convert time slots to hourly statuses: {"1": {"1": "no", ...}, ...}"""
     return {str(q): hours_builder(slots) for q, slots in sorted(schedules.items())}
