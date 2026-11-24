@@ -18,6 +18,15 @@ from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional
 import argparse
 
+try:
+    from custom_schedule import build_custom_hours, is_other_city, parse_custom_schedule
+except ImportError:  # imported as a package (src.cek_scraper)
+    from src.custom_schedule import (
+        build_custom_hours,
+        is_other_city,
+        parse_custom_schedule,
+    )
+
 
 # Setup logging
 def setup_logging(log_level: str = "INFO") -> logging.Logger:
@@ -218,6 +227,8 @@ class PowercutScraper:
         self.end_date = end_date
         self.logger = logger or logging.getLogger("cek_scraper")
         self.session = session or create_session_with_retries()
+        # date -> (message timestamp, {queue: slots}) for custom schedules
+        self.custom_schedules: Dict[str, tuple] = {}
 
         self.months_uk = {
             "січня": "01",
@@ -400,6 +411,10 @@ class PowercutScraper:
                 br.replace_with("\n")
             message_text = message_text_div.get_text()
 
+            # Skip messages addressed to other cities (e.g. Pavlohrad)
+            if is_other_city(message_text):
+                continue
+
             # Extract date from message - if not found, use message timestamp date
             date = self.extract_date(message_text)
 
@@ -441,6 +456,21 @@ class PowercutScraper:
                     self.logger.debug(
                         f'Processing message posted at: {message_timestamp.strftime("%Y-%m-%d %H:%M:%S %Z") if message_timestamp else "Unknown time"} for date {date}'
                     )
+
+                    # Custom schedule (queues 1, 2, 3) - a later message replaces an earlier one
+                    custom = parse_custom_schedule(message_text)
+                    if custom:
+                        msg_time = (
+                            message_timestamp.timestamp() if message_timestamp else 0
+                        )
+                        prev = self.custom_schedules.get(date)
+                        if not prev or msg_time >= prev[0]:
+                            self.custom_schedules[date] = (msg_time, custom)
+                            self.logger.debug(
+                                f"Found custom schedule: "
+                                f"{message_timestamp.strftime('%Y-%m-%d %H:%M') if message_timestamp else 'unknown time'}, "
+                                f"date {date}, queues {sorted(custom)}"
+                            )
 
                     # Перевірка, чи є це частковим оновленням графіка
                     # Check if this is a partial schedule update (e.g., changes for 19:00-24:00)
@@ -1543,6 +1573,8 @@ class PowercutScraper:
                         f"Added empty schedule (all 'yes') for missing queue {queue_key} on {date_str}"
                     )
 
+        self.apply_custom_schedules(data)
+
         # Set today's timestamp (using Kyiv timezone)
         kyiv_tz = ZoneInfo("Europe/Kyiv")
         today_midnight = datetime.now(kyiv_tz).replace(
@@ -1557,6 +1589,30 @@ class PowercutScraper:
         data["lastUpdateStatus"]["at"] = checked_at
 
         return data
+
+    def apply_custom_schedules(self, data: dict) -> None:
+        """Write custom schedules (queues 1, 2, 3) into fact.data as GPV1, GPV2, ..."""
+        kyiv_tz = ZoneInfo("Europe/Kyiv")
+        # Drop the separate "custom" section used by earlier versions
+        data.pop("custom", None)
+
+        for date_str, (_, schedules) in getattr(self, "custom_schedules", {}).items():
+            ts = int(
+                datetime.strptime(date_str, "%d.%m.%Y")
+                .replace(tzinfo=kyiv_tz)
+                .timestamp()
+            )
+            day = data["fact"]["data"].setdefault(str(ts), {})
+            # The latest message replaces earlier custom queues for the day
+            for key in [k for k in day if re.fullmatch(r"GPV\d+", k)]:
+                del day[key]
+            for queue, hours in build_custom_hours(
+                schedules, self.create_hours_from_schedules
+            ).items():
+                day[f"GPV{queue}"] = hours
+                self.logger.debug(
+                    f"Custom schedule for {date_str}, Queue {queue}: {schedules[int(queue)]}"
+                )
 
     def create_json_structure(self) -> dict:
         """Create initial JSON structure following dnipro.json schema"""
@@ -1810,6 +1866,12 @@ def main():
         logger.info(f"✓ Successfully saved schedules to {args.output}")
         logger.info(f"  Found schedules for {len(schedules)} date(s)")
         logger.info(f"  Total queues found: {len(all_queues)} - {sorted(all_queues)}")
+        custom_queues = {
+            q for _, sched in scraper.custom_schedules.values() for q in sched
+        }
+        logger.info(
+            f"  Custom queues found: {len(custom_queues)} - {sorted(custom_queues)}"
+        )
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

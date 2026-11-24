@@ -148,8 +148,12 @@ class DataProcessor:
         if not day_keys:
             raise ValueError("JSON не містить даних фактів")
 
-        first_day = fact["data"][day_keys[0]]
-        groups = list(first_day.keys())
+        # Groups may differ between dates (e.g. custom queues only on one day)
+        groups = []
+        for day_key in day_keys[:2]:
+            for group in fact["data"][day_key]:
+                if group not in groups:
+                    groups.append(group)
 
         log(f"Знайдені групи: {groups}")
         return groups
