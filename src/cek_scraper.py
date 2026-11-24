@@ -466,6 +466,11 @@ class PowercutScraper:
                         prev = self.custom_schedules.get(date)
                         if not prev or msg_time >= prev[0]:
                             self.custom_schedules[date] = (msg_time, custom)
+                            self.logger.debug(
+                                f"Found custom schedule: "
+                                f"{message_timestamp.strftime('%Y-%m-%d %H:%M') if message_timestamp else 'unknown time'}, "
+                                f"date {date}, queues {sorted(custom)}"
+                            )
 
                     # Перевірка, чи є це частковим оновленням графіка
                     # Check if this is a partial schedule update (e.g., changes for 19:00-24:00)
@@ -1608,6 +1613,10 @@ class PowercutScraper:
             custom_data[str(ts)] = build_custom_hours(
                 schedules, self.create_hours_from_schedules
             )
+            for queue, slots in sorted(schedules.items()):
+                self.logger.debug(
+                    f"Custom schedule for {date_str}, Queue {queue}: {slots}"
+                )
 
     def create_json_structure(self) -> dict:
         """Create initial JSON structure following dnipro.json schema"""
@@ -1861,6 +1870,12 @@ def main():
         logger.info(f"✓ Successfully saved schedules to {args.output}")
         logger.info(f"  Found schedules for {len(schedules)} date(s)")
         logger.info(f"  Total queues found: {len(all_queues)} - {sorted(all_queues)}")
+        custom_queues = {
+            q for _, sched in scraper.custom_schedules.values() for q in sched
+        }
+        logger.info(
+            f"  Custom queues found: {len(custom_queues)} - {sorted(custom_queues)}"
+        )
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
