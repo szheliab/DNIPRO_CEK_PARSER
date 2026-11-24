@@ -124,6 +124,30 @@ class CustomFactDataTest(unittest.TestCase):
 
         self.assertEqual(set(data["fact"]["data"][ts]), {"GPV1.1", "GPV1"})
 
+    def test_prunes_images_of_removed_custom_queues(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from src import gener_im_1_G as gen
+
+        hours = {str(h): "yes" for h in range(1, 25)}
+        data = {"fact": {"data": {"1": {"GPV1": hours}}, "update": "x"}, "preset": {}}
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            for name in ("gpv-3-emergency.png", "gpv-3-1-emergency.png"):
+                (out / name).write_bytes(b"")
+            (out / "cek.json").write_text(json.dumps(data), encoding="utf-8")
+            gen.OUT_DIR = out
+            gen.generate_from_json(str(out / "cek.json"))
+            self.assertFalse((out / "gpv-3-emergency.png").exists())
+            self.assertTrue((out / "gpv-3-1-emergency.png").exists())
+            self.assertTrue((out / "gpv-1-emergency.png").exists())
+
+    def test_city_regex_ignores_word_endings(self) -> None:
+        message = "окремим графіком. Черга 1 черга:\n✔️ 00:00 - 02:00;"
+        self.assertEqual(parse_custom_schedule(message), {1: ["00:00-02:00"]})
+
     def test_groups_are_discovered_across_displayed_dates(self) -> None:
         from src import gener_im_1_G as gen
 

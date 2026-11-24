@@ -14,7 +14,7 @@ QUEUE_HEADER = re.compile(
     r"(?<![\d.])(\d{1,2}(?:\.\d)?)\s*(?:черга|група)\s*:", re.IGNORECASE
 )
 # Addressed city, e.g. "м. Дніпро" / "м. ПАВЛОГРАД"
-CITY = re.compile(r"м\.\s*([А-Яа-яІіЇїЄєҐґ'’ʼ-]+)")
+CITY = re.compile(r"(?<![А-Яа-яІіЇїЄєҐґ'’ʼ-])м\.\s*([А-Яа-яІіЇїЄєҐґ'’ʼ-]+)")
 TIME_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})")
 
 
