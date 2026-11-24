@@ -138,11 +138,6 @@ jobs:
           name: json-data
           path: out/
 
-      # All images are regenerated, so drop old ones to propagate deletions
-      - name: Remove stale images
-        if: needs.scrape-and-check.outputs.fact_data_changed == 'true'
-        run: rm -rf out/images
-
       - name: Download images artifact
         if: needs.scrape-and-check.outputs.fact_data_changed == 'true'
         uses: actions/download-artifact@v8

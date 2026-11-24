@@ -16,7 +16,6 @@ from PIL import Image, ImageDraw, ImageFont
 import locale
 import os
 import argparse
-import re
 import sys
 
 # Спроба встановити локаль для українських назв місяців
@@ -684,17 +683,6 @@ def generate_from_json(json_path: str):
         log(f"▶ Генерую для {group}…")
         renderer = ImageRenderer(data, Path(json_path), group)
         renderer.render()
-
-    # Remove images of whole-number queues (gpv-<N>-emergency.png) that no longer exist
-    expected = {
-        f"gpv-{g.replace('GPV', '')}-emergency.png"
-        for g in groups
-        if g.replace("GPV", "").isdigit()
-    }
-    for old in OUT_DIR.glob("gpv-*-emergency.png"):
-        if re.fullmatch(r"gpv-\d+-emergency\.png", old.name) and old.name not in expected:
-            old.unlink()
-            log(f"Видалено застарілу картинку {old.name}")
 
 
 # --- Завантаження останнього JSON ---
