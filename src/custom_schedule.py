@@ -14,12 +14,21 @@ QUEUE_HEADER = re.compile(r"(?<![\d.])(\d{1,2})\s*черга\s*:", re.IGNORECASE
 TIME_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})")
 
 
+def is_other_city(message: str) -> bool:
+    """True if the message header addresses another city (e.g. Pavlohrad) and not Dnipro."""
+    header = message[:200].lower()
+    return "павлоград" in header and "дніпро" not in header
+
+
 def parse_custom_schedule(message: str) -> Dict[int, List[str]]:
     """Extract the schedule for whole-number queues.
 
     Returns:
         {1: ["00:00-02:00", "10:00-14:00"], 2: [...]}; empty dict if the format does not match
     """
+    if is_other_city(message):
+        return {}
+
     headers = list(QUEUE_HEADER.finditer(message))
     schedules: Dict[int, List[str]] = {}
 

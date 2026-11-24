@@ -19,9 +19,13 @@ from typing import Dict, List, Optional
 import argparse
 
 try:
-    from custom_schedule import build_custom_hours, parse_custom_schedule
+    from custom_schedule import build_custom_hours, is_other_city, parse_custom_schedule
 except ImportError:  # imported as a package (src.cek_scraper)
-    from src.custom_schedule import build_custom_hours, parse_custom_schedule
+    from src.custom_schedule import (
+        build_custom_hours,
+        is_other_city,
+        parse_custom_schedule,
+    )
 
 
 # Setup logging
@@ -406,6 +410,10 @@ class PowercutScraper:
             for br in message_text_div.find_all("br"):
                 br.replace_with("\n")
             message_text = message_text_div.get_text()
+
+            # Skip messages addressed to other cities (e.g. Pavlohrad)
+            if is_other_city(message_text):
+                continue
 
             # Extract date from message - if not found, use message timestamp date
             date = self.extract_date(message_text)

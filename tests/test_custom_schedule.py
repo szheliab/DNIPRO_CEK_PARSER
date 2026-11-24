@@ -37,6 +37,19 @@ class CustomScheduleTest(unittest.TestCase):
         self.assertEqual(parse_custom_schedule(message), {})
 
 
+class OtherCityTest(unittest.TestCase):
+    def test_pavlohrad_message_is_ignored(self) -> None:
+        message = FIRST.replace("м. Дніпро", "м. ПАВЛОГРАД")
+        self.assertEqual(parse_custom_schedule(message), {})
+
+    def test_pavlohrad_standard_queues_are_not_custom(self) -> None:
+        message = (
+            "📢 Шановні мешканці м. ПАВЛОГРАД‼️\n📌 2.2 черга:\n✔️ 00:00 - 03:00;\n"
+            "📌 6.2 черга:\n✔️ 03:00 - 08:00;"
+        )
+        self.assertEqual(parse_custom_schedule(message), {})
+
+
 class CustomImageTest(unittest.TestCase):
     def test_generates_image_per_custom_queue(self) -> None:
         import json
