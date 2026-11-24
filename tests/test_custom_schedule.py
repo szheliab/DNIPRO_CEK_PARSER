@@ -37,6 +37,24 @@ class CustomScheduleTest(unittest.TestCase):
         self.assertEqual(parse_custom_schedule(message), {})
 
 
+class ParserEdgeCasesTest(unittest.TestCase):
+    def test_standard_queue_header_stops_custom_block(self) -> None:
+        message = (
+            "м. Дніпро\n📌 1 черга:\n✔️ 00:00 - 02:00;\n"
+            "📌 1.1 черга:\n✔️ 10:00 - 14:00;"
+        )
+        self.assertEqual(parse_custom_schedule(message), {1: ["00:00-02:00"]})
+
+    def test_midnight_end_is_normalized(self) -> None:
+        message = "м. Дніпро\n📌 1 черга:\n✔️ 22:00 - 00:00;"
+        self.assertEqual(parse_custom_schedule(message), {1: ["22:00-24:00"]})
+
+    def test_other_cities_are_ignored(self) -> None:
+        for city in ("Кам'янське", "ПАВЛОГРАД Дніпропетровської області"):
+            message = FIRST.replace("м. Дніпро", f"м. {city}")
+            self.assertEqual(parse_custom_schedule(message), {}, city)
+
+
 class OtherCityTest(unittest.TestCase):
     def test_pavlohrad_message_is_ignored(self) -> None:
         message = FIRST.replace("м. Дніпро", "м. ПАВЛОГРАД")
@@ -85,6 +103,34 @@ class CustomFactDataTest(unittest.TestCase):
             gen.generate_from_json(str(json_path))
             self.assertTrue((Path(tmp) / "gpv-1-emergency.png").exists())
             self.assertTrue((Path(tmp) / "gpv-2-emergency.png").exists())
+
+
+    def test_latest_schedule_clears_stale_custom_queues(self) -> None:
+        import logging
+
+        from src.cek_scraper import PowercutScraper
+
+        scraper = PowercutScraper.__new__(PowercutScraper)
+        scraper.logger = logging.getLogger(__name__)
+        scraper.create_hours_from_schedules = (
+            lambda slots: PowercutScraper.create_hours_from_schedules(scraper, slots)
+        )
+        scraper.create_default_hours = lambda: {str(i): "yes" for i in range(1, 25)}
+        scraper.custom_schedules = {"24.11.2026": (0, {1: ["00:00-02:00"]})}
+        ts = "1795471200"
+        data = {"fact": {"data": {ts: {"GPV1.1": {}, "GPV1": {}, "GPV3": {}}}}}
+
+        scraper.apply_custom_schedules(data)
+
+        self.assertEqual(set(data["fact"]["data"][ts]), {"GPV1.1", "GPV1"})
+
+    def test_groups_are_discovered_across_displayed_dates(self) -> None:
+        from src import gener_im_1_G as gen
+
+        data = {"fact": {"data": {"1": {"GPV1.1": {}}, "2": {"GPV1.1": {}, "GPV1": {}}}}}
+        self.assertEqual(
+            gen.DataProcessor.get_groups_from_data(data), ["GPV1.1", "GPV1"]
+        )
 
 
 if __name__ == "__main__":

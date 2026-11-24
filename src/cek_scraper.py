@@ -1603,6 +1603,9 @@ class PowercutScraper:
                 .timestamp()
             )
             day = data["fact"]["data"].setdefault(str(ts), {})
+            # The latest message replaces earlier custom queues for the day
+            for key in [k for k in day if re.fullmatch(r"GPV\d+", k)]:
+                del day[key]
             for queue, hours in build_custom_hours(
                 schedules, self.create_hours_from_schedules
             ).items():
