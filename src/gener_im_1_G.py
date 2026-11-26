@@ -55,6 +55,12 @@ def log(message):
 class Config:
     """Клас для зберігання всіх констант конфігурації"""
 
+    # Ukrainian month names in genitive case (index = month - 1)
+    MONTHS_UK = (
+        "січня", "лютого", "березня", "квітня", "травня", "червня",
+        "липня", "серпня", "вересня", "жовтня", "листопада", "грудня",
+    )
+
     # Розміри клітинок
     CELL_W = 44
     CELL_H = 36
@@ -359,7 +365,8 @@ class ImageRenderer:
             )
 
             dt = datetime.fromtimestamp(int(day_key), ZoneInfo(Config.TIMEZONE))
-            date_label = dt.strftime("%d %B")
+            # Locale-independent: Ukrainian genitive month name
+            date_label = f"{dt.day} {Config.MONTHS_UK[dt.month - 1]}"
             bbox = draw.textbbox((0, 0), date_label, font=font_date)
             w = bbox[2] - bbox[0]
             h = bbox[3] - bbox[1]
